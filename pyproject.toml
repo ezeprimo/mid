@@ -6,10 +6,26 @@ build-backend = "setuptools.build_meta"
 name = "mid"
 version = "0.1.0"
 description = "CLI document to Markdown converter using Microsoft MarkItDown"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "markitdown>=0.1.0",
 ]
+keywords = ["cli", "markdown", "document-conversion", "markitdown", "office"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/ezeprimo/mid"
+Repository = "https://github.com/ezeprimo/mid"
+Issues = "https://github.com/ezeprimo/mid/issues"
 
 [project.scripts]
 mid = "mid.cli:main"
