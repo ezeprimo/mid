@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -224,3 +225,48 @@ class TestBatchNonFatal:
         assert "Succeeded: 0" in out
         assert "Failed: 2" in out
         assert not (output / "a.md").exists()  # not written on failure
+
+
+# ===========================================================================
+# Real E2E batch
+# ===========================================================================
+
+
+class TestBatchRealE2E:
+    """Real end-to-end batch conversion against generated .docx files."""
+
+    def _require_markitdown(self) -> None:
+        if importlib.util.find_spec("markitdown") is None:
+            pytest.fail(
+                "Real E2E tests require markitdown in local .venv. "
+                "Install with: .venv\\Scripts\\python -m pip install 'markitdown[all]'",
+            )
+
+    def test_real_docx_batch_writes_markdown_and_reports_summary(
+        self, tmp_path: Path, make_docx,
+    ) -> None:
+        self._require_markitdown()
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        make_docx(input_dir / "first.docx", text="First batch e2e content")
+        make_docx(input_dir / "second.docx", text="Second batch e2e content")
+        (input_dir / "ignore.txt").write_text("skip", encoding="utf-8")
+
+        output = tmp_path / "out"
+        code, out, err = _run(["batch", str(input_dir), "-o", str(output)])
+
+        assert code == 0
+        assert err == ""
+
+        first_md = output / "first.md"
+        second_md = output / "second.md"
+        assert first_md.exists()
+        assert second_md.exists()
+        assert "First batch e2e content" in first_md.read_text(encoding="utf-8")
+        assert "Second batch e2e content" in second_md.read_text(encoding="utf-8")
+
+        assert "Processed: 2" in out
+        assert "Succeeded: 2" in out
+        assert "Failed: 0" in out
+        assert "Skipped: 1" in out
