@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -165,6 +166,39 @@ class TestConvertSuccess:
 
         assert code == 1
         assert "conversion failed" in err.lower()
+
+
+class TestConvertRealE2E:
+    """Real end-to-end CLI conversion against a generated .docx file."""
+
+    def _require_markitdown(self) -> None:
+        if importlib.util.find_spec("markitdown") is None:
+            pytest.fail(
+                "Real E2E tests require markitdown in local .venv. "
+                "Install with: .venv\\Scripts\\python -m pip install 'markitdown[all]'",
+            )
+
+    def test_real_docx_to_stdout(self, tmp_path: Path, make_docx) -> None:
+        self._require_markitdown()
+        src = make_docx(tmp_path / "real.docx", text="E2E real docx content")
+
+        code, out, err = _run(["convert", str(src)])
+
+        assert code == 0
+        assert "E2E real docx content" in out
+        assert err == ""
+
+    def test_real_docx_to_output_file(self, tmp_path: Path, make_docx) -> None:
+        self._require_markitdown()
+        src = make_docx(tmp_path / "real-output.docx", text="E2E output target")
+        dst = tmp_path / "result.md"
+
+        code, out, err = _run(["convert", str(src), "-o", str(dst)])
+
+        assert code == 0
+        assert out == ""
+        assert err == ""
+        assert "E2E output target" in dst.read_text(encoding="utf-8")
 
 
 # ===========================================================================
