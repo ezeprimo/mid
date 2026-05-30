@@ -1,45 +1,61 @@
 <#
 .SYNOPSIS
-    Build mid.exe portable executable with PyInstaller.
+    Build mid Windows release executable with PyInstaller.
 .DESCRIPTION
-    Creates a single-file executable dist/mid.exe via PyInstaller --onefile.
-    Hidden imports are resolved empirically -- if the build succeeds but the
-    exe fails at runtime with an ImportError, add the missing module to
-    $HIDDEN_IMPORTS and rebuild.
+    Creates a single-file executable `mid-windows-amd64.exe` via PyInstaller.
+    Hidden imports are resolved empirically -- if runtime fails with ImportError,
+    add the missing module to $HIDDEN_IMPORTS and rebuild.
 
     Usage:
-        .\scripts\build.ps1          # normal build
-        .\scripts\build.ps1 -Clean   # clean + rebuild
+        .\scripts\build.ps1
+        .\scripts\build.ps1 -Clean
+        .\scripts\build.ps1 -Version v1.2.3 -OutputDir dist
 .PARAMETER Clean
     Remove previous build artifacts before building.
+.PARAMETER Version
+    Optional CI tag/version (vX.Y.Z or X.Y.Z) validated against package version.
+.PARAMETER OutputDir
+    Destination directory for output artifact.
 #>
 
 param(
-    [switch]$Clean = $false
+    [switch]$Clean = $false,
+    [string]$Version = "",
+    [string]$OutputDir = "dist"
 )
 
 $ErrorActionPreference = "Stop"
 
+if ($Version.StartsWith("v")) {
+    $Version = $Version.Substring(1)
+}
+
+if ($Version) {
+    $packageVersion = (& python -c "from pathlib import Path; ns={}; exec(Path('src/mid/__init__.py').read_text(encoding='utf-8'), ns); print(ns['__version__'])").Trim()
+    if ($Version -ne $packageVersion) {
+        throw "Version mismatch: expected $Version but package is $packageVersion"
+    }
+}
+
 # ---- clean -----------------------------------------------------------------
-if ($Clean -or (Test-Path "build") -or (Test-Path "dist")) {
+if ($Clean -or (Test-Path "build") -or (Test-Path $OutputDir)) {
     Write-Host "Cleaning previous build artifacts..."
-    Remove-Item -Recurse -Force "build", "dist" -ErrorAction SilentlyContinue
-    Remove-Item "mid.spec" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force "build", $OutputDir -ErrorAction SilentlyContinue
+    Remove-Item "mid-windows-amd64.spec" -ErrorAction SilentlyContinue
 }
 
 # ---- prerequisites ---------------------------------------------------------
 $null = Get-Command pyinstaller -ErrorAction Stop | Out-Null
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
-Write-Host "Building mid.exe ..."
+Write-Host "Building mid-windows-amd64.exe ..."
 
-# Hidden imports discovered empirically during Phase 5.
-# Add modules here when the built exe fails at runtime with ImportError.
+# Hidden imports discovered empirically.
 $HIDDEN_IMPORTS = @(
     "--hidden-import", "markitdown"
 )
 
 # Exclude heavy packages present in data-science environments but unused by mid.
-# Adjust this list if your environment has different heavy packages.
 $EXCLUDES = @(
     "--exclude-module", "torch"
     "--exclude-module", "tensorflow"
@@ -54,11 +70,11 @@ $EXCLUDES = @(
 )
 
 # ---- build -----------------------------------------------------------------
-pyinstaller --onefile --name mid --clean `
+pyinstaller --onefile --name mid-windows-amd64 --clean `
     --paths src `
     $HIDDEN_IMPORTS `
     $EXCLUDES `
-    --distpath dist `
+    --distpath $OutputDir `
     --workpath build `
     --specpath . `
     src/mid/__main__.py
@@ -66,8 +82,9 @@ pyinstaller --onefile --name mid --clean `
 $exitCode = $LASTEXITCODE
 
 if ($exitCode -eq 0) {
-    $size = (Get-Item "dist/mid.exe").Length / 1MB
-    Write-Host ("SUCCESS: dist/mid.exe created (" + [math]::Round($size, 1) + " MB)")
+    $artifact = Join-Path $OutputDir "mid-windows-amd64.exe"
+    $size = (Get-Item $artifact).Length / 1MB
+    Write-Host ("SUCCESS: " + $artifact + " created (" + [math]::Round($size, 1) + " MB)")
 } else {
     Write-Error ("BUILD FAILED (exit " + $exitCode + ")")
 }
