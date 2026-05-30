@@ -27,6 +27,44 @@ Check the CLI:
 mid --help
 ```
 
+## Install from GitHub Releases (phase 1)
+
+Use stable bootstrap installers (no admin/sudo required):
+
+```powershell
+# Windows (latest stable)
+irm https://raw.githubusercontent.com/ezeprimo/mid/main/install.ps1 | iex
+
+# Windows (pin / rollback to exact version)
+$env:MID_VERSION = "v1.2.3"
+irm https://raw.githubusercontent.com/ezeprimo/mid/main/install.ps1 | iex
+```
+
+```bash
+# Linux (latest stable)
+curl -fsSL https://raw.githubusercontent.com/ezeprimo/mid/main/install.sh | bash
+
+# Linux (pin / rollback to exact version)
+MID_VERSION=v1.2.3 curl -fsSL https://raw.githubusercontent.com/ezeprimo/mid/main/install.sh | bash
+```
+
+If binary integrity or compatibility checks fail, use fallback with the same version target:
+
+```bash
+pipx install --force "mid==1.2.3"
+python -m pip install --user "mid==1.2.3"
+```
+
+### Update / rollback flow
+
+- Update to latest stable: clear `MID_VERSION` and rerun the installer.
+- Rollback: set `MID_VERSION=vX.Y.Z` and rerun the same installer command.
+
+### Uninstall (phase 1)
+
+- Windows: remove `%LOCALAPPDATA%\mid\bin\mid.exe` and remove `%LOCALAPPDATA%\mid\bin` from user PATH if you no longer need it.
+- Linux: remove `${MID_INSTALL_DIR:-$HOME/.local/bin}/mid` and remove the installer PATH stanza from `~/.profile` (or your equivalent shell profile).
+
 ## Core commands
 
 ```bash
