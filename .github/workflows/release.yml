@@ -1,0 +1,251 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-binaries:
+    name: build-${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+            script: scripts/build.ps1
+            artifact_name: mid-windows-amd64.exe
+          - os: ubuntu-latest
+            target: linux-amd64
+            script: scripts/build.sh
+            artifact_name: mid-linux-amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip pyinstaller build "markitdown[all]"
+
+      - name: Build Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build.ps1 -Clean -Version "${{ github.ref_name }}" -OutputDir dist
+
+      - name: Build Linux binary
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash ./scripts/build.sh --clean --version "${{ github.ref_name }}" --output-dir dist
+
+      - name: Smoke check --version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $versionOut = & ".\dist\mid-windows-amd64.exe" --version
+          if ($versionOut -notmatch "mid") {
+            throw "version output did not include expected marker"
+          }
+
+      - name: Smoke check --version (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./dist/mid-linux-amd64 --version
+
+      - name: Generate smoke .docx (cross-platform)
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          run_temp = Path(os.environ["RUNNER_TEMP"])
+          out = run_temp / "workflow-smoke.docx"
+
+          content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+            <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+            <Default Extension="xml" ContentType="application/xml"/>
+            <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+          </Types>
+          """
+          rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+          </Relationships>
+          """
+          document = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:body><w:p><w:r><w:t>workflow smoke conversion</w:t></w:r></w:p></w:body>
+          </w:document>
+          """
+
+          with ZipFile(out, mode="w", compression=ZIP_DEFLATED) as zf:
+            zf.writestr("[Content_Types].xml", content_types)
+            zf.writestr("_rels/.rels", rels)
+            zf.writestr("word/document.xml", document)
+
+      - name: Smoke conversion (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $docx = Join-Path $env:RUNNER_TEMP "workflow-smoke.docx"
+          $md = Join-Path $env:RUNNER_TEMP "workflow-smoke.md"
+          & ".\dist\mid-windows-amd64.exe" convert $docx -o $md
+          if (-not (Test-Path $md)) {
+            throw "Expected smoke markdown output file"
+          }
+          $text = Get-Content -Raw $md
+          if ($text -notmatch "workflow smoke conversion") {
+            throw "Converted markdown missing expected content"
+          }
+
+      - name: Smoke conversion (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          DOCX="$RUNNER_TEMP/workflow-smoke.docx"
+          MD="$RUNNER_TEMP/workflow-smoke.md"
+          ./dist/mid-linux-amd64 convert "$DOCX" -o "$MD"
+          test -f "$MD"
+          grep -q "workflow smoke conversion" "$MD"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/${{ matrix.artifact_name }}
+
+  build-python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Upload python artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-packages
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+
+  prepare-release:
+    runs-on: ubuntu-latest
+    needs: [build-binaries, build-python]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-windows-amd64
+          path: release-artifacts
+
+      - name: Download linux binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-linux-amd64
+          path: release-artifacts
+
+      - name: Download python artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-packages
+          path: release-artifacts
+
+      - name: Generate checksums.txt
+        shell: bash
+        run: |
+          cd release-artifacts
+          sha256sum mid-windows-amd64.exe mid-linux-amd64 > checksums.txt
+
+      - name: Render release notes
+        run: |
+          python scripts/release/render_release_notes.py \
+            --version "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --output release-artifacts/release-notes.md
+
+      - name: Validate release contract
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          root = Path("release-artifacts")
+          assets = [{"name": p.name} for p in sorted(root.glob("*")) if p.is_file() and p.name != "release.json" and p.name != "releases.json"]
+          payload = {
+            "tag_name": "${{ github.ref_name }}",
+            "draft": False,
+            "prerelease": False,
+            "assets": assets,
+            "checksums_content": (root / "checksums.txt").read_text(encoding="utf-8"),
+            "body": (root / "release-notes.md").read_text(encoding="utf-8"),
+          }
+
+          (root / "release.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+          (root / "releases.json").write_text(json.dumps([payload], indent=2), encoding="utf-8")
+
+      - name: Run validator script
+        run: |
+          python scripts/release/validate_release.py \
+            --release-json release-artifacts/release.json \
+            --requested-tag "${{ github.ref_name }}" \
+            --releases-json release-artifacts/releases.json
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: release-artifacts
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [prepare-release]
+    permissions:
+      contents: write
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: release-artifacts
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-artifacts/release-notes.md
+          files: |
+            release-artifacts/mid-windows-amd64.exe
+            release-artifacts/mid-linux-amd64
+            release-artifacts/*.whl
+            release-artifacts/*.tar.gz
+            release-artifacts/checksums.txt
