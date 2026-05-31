@@ -70,7 +70,6 @@ python -m PyInstaller --onefile --name mid-linux-amd64 --clean \
   --exclude-module jedi \
   --exclude-module zmq \
   --exclude-module pytest \
-  --exclude-module onnxruntime \
   --distpath "$OUTPUT_DIR" \
   --workpath build \
   --specpath . \
