@@ -74,6 +74,7 @@ try {
     $expectedHash = Get-ExpectedChecksum -ChecksumsPath $downloadedChecksums -RequiredAssetName $AssetName
     $actualHash = (Get-FileHash -LiteralPath $downloadedBinary -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($expectedHash -ne $actualHash) { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -Reason "SHA-256 mismatch for $AssetName"; exit 1 }
+    if ($PSVersionTable.PSEdition -eq 'Core' -and ($IsLinux -or $IsMacOS)) { chmod +x $downloadedBinary }
     try { $versionOutput = (& $downloadedBinary --version 2>&1 | Out-String) } catch { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -Reason "Binary smoke check failed (--version)."; exit 1 }
     if (-not $versionOutput -or $versionOutput -notmatch $SmokePattern) { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -Reason "Unexpected binary output during smoke check."; exit 1 }
 
