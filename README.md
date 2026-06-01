@@ -113,6 +113,33 @@ Use the project-local virtual environment for all Python commands:
 
 The test suite includes mocked converter tests and real end-to-end `.docx` conversion checks.
 
+## Agent skill for `mid`
+
+This repo ships a project-local agent skill for tools that support repo-distributed `SKILL.md` files.
+
+### What it teaches
+
+- when to use `mid` for document-to-Markdown conversion
+- when to use the local `.venv` vs packaged binaries from `dist/`
+- how to validate real conversions instead of shallow `--help` / `--version` checks
+- which formats are supported vs intentionally rejected as legacy
+
+### Skill location
+
+- `skills/mid-cli/SKILL.md`
+
+### Supporting reference
+
+- `skills/mid-cli/references/usage.md`
+
+### Suggested ways to consume it
+
+1. If your agent runtime scans repo-local skills, open the repo and let it discover `skills/mid-cli/SKILL.md`.
+2. If your runtime uses a personal skills directory, copy or symlink the `skills/mid-cli/` folder into that directory.
+3. Reload or restart your agent runtime after installing the skill so it refreshes skill discovery.
+
+This skill is distributed with the repo on purpose: agents should learn the real `mid` workflow from the source project, including `.venv` usage, release-installer limits, and real conversion validation.
+
 ## Current status and scope
 
 - Early-stage CLI project focused on reliable document-to-Markdown conversion.
