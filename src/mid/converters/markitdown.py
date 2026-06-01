@@ -14,10 +14,19 @@ class MarkitDownConverter(Converter):
         .docx, .xlsx, .pptx, .pdf, .html, .csv, .json, .xml, .epub
     """
 
-    supported_extensions: ClassVar[frozenset[str]] = frozenset({
-        ".docx", ".xlsx", ".pptx", ".pdf",
-        ".html", ".csv", ".json", ".xml", ".epub",
-    })
+    supported_extensions: ClassVar[frozenset[str]] = frozenset(
+        {
+            ".docx",
+            ".xlsx",
+            ".pptx",
+            ".pdf",
+            ".html",
+            ".csv",
+            ".json",
+            ".xml",
+            ".epub",
+        }
+    )
 
     def convert(self, path: Path) -> ConvertResult:
         """Convert *path* via MarkItDown.

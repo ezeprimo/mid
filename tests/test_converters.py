@@ -9,7 +9,6 @@ import pytest
 
 from mid.converters.legacy import LegacyPlaceholder
 from mid.converters.markitdown import MarkitDownConverter
-from mid.models import ConvertResult
 
 
 # ===========================================================================
@@ -18,7 +17,6 @@ from mid.models import ConvertResult
 
 
 class TestMarkitDownConverter:
-
     def test_success_returns_content(self, tmp_path: Path) -> None:
         """MarkItDown returns text_content → ConvertResult with success."""
         src = tmp_path / "test.docx"
@@ -89,14 +87,19 @@ class TestMarkitDownConverter:
 
 
 class TestLegacyPlaceholder:
-
-    @pytest.mark.parametrize("ext,modern", [
-        (".doc", ".docx"),
-        (".xls", ".xlsx"),
-        (".ppt", ".pptx"),
-    ])
+    @pytest.mark.parametrize(
+        "ext,modern",
+        [
+            (".doc", ".docx"),
+            (".xls", ".xlsx"),
+            (".ppt", ".pptx"),
+        ],
+    )
     def test_legacy_formats_return_error(
-        self, tmp_path: Path, ext: str, modern: str,
+        self,
+        tmp_path: Path,
+        ext: str,
+        modern: str,
     ) -> None:
         """All three legacy formats return success=False with helpful msg."""
         src = tmp_path / f"legacy{ext}"
