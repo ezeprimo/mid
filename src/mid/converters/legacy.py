@@ -13,8 +13,7 @@ from mid.models import ConvertResult
 
 
 _LEGACY_MSG = (
-    "legacy format. Convert to .docx (or .xlsx / .pptx) first "
-    "using Microsoft Word (Excel / PowerPoint) or LibreOffice"
+    "legacy format. Convert to .docx (or .xlsx / .pptx) first using Microsoft Word (Excel / PowerPoint) or LibreOffice"
 )
 
 
@@ -25,9 +24,13 @@ class LegacyPlaceholder(Converter):
         .doc, .xls, .ppt
     """
 
-    supported_extensions: ClassVar[frozenset[str]] = frozenset({
-        ".doc", ".xls", ".ppt",
-    })
+    supported_extensions: ClassVar[frozenset[str]] = frozenset(
+        {
+            ".doc",
+            ".xls",
+            ".ppt",
+        }
+    )
 
     def convert(self, path: Path) -> ConvertResult:
         """Return a ``ConvertResult`` with a helpful legacy-format error.
