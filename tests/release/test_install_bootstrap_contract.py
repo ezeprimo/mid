@@ -72,7 +72,11 @@ def _run_bash_script(
     bash: str, script: Path, env: dict[str, str], overrides: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
     exports = "; ".join(f"export {key}={shlex.quote(value)}" for key, value in sorted(overrides.items()))
-    command = f"{exports}; exec bash {shlex.quote(_to_bash_path(script))}" if exports else f'exec bash {shlex.quote(_to_bash_path(script))}'
+    command = (
+        f"{exports}; exec bash {shlex.quote(_to_bash_path(script))}"
+        if exports
+        else f"exec bash {shlex.quote(_to_bash_path(script))}"
+    )
     return subprocess.run([bash, "-lc", command], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False)
 
 
@@ -208,9 +212,7 @@ def linux_release_harness(tmp_path: Path) -> LinuxHarness:
         (tags_dir / tag).write_text(json.dumps(release_payload), encoding="utf-8")
 
     latest_payload = json.loads((tags_dir / latest_tag).read_text(encoding="utf-8"))
-    (api_root / "repos" / "fixture" / "mid" / "releases" / "latest").write_text(
-        json.dumps(latest_payload), encoding="utf-8"
-    )
+    (api_root / "repos" / "fixture" / "mid" / "releases" / "latest").write_text(json.dumps(latest_payload), encoding="utf-8")
 
     return LinuxHarness(
         api_base=f"file://{_to_bash_path(api_root)}",
@@ -311,9 +313,7 @@ def test_linux_bootstrap_and_rollback_runtime_coverage(linux_release_harness: Li
     assert "mid v1.2.2" in version_check.stdout
 
 
-def test_linux_integrity_and_path_failure_guidance_is_executed(
-    linux_release_harness: LinuxHarness, tmp_path: Path
-) -> None:
+def test_linux_integrity_and_path_failure_guidance_is_executed(linux_release_harness: LinuxHarness, tmp_path: Path) -> None:
     bash = _require_tool("bash")
     _require_bash_command(bash, "curl")
     _require_bash_command(bash, "sha256sum")
