@@ -72,7 +72,7 @@ def _run_bash_script(
     bash: str, script: Path, env: dict[str, str], overrides: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
     exports = "; ".join(f"export {key}={shlex.quote(value)}" for key, value in sorted(overrides.items()))
-    command = f"{exports}; \"{_to_bash_path(script)}\"" if exports else f'"{_to_bash_path(script)}"'
+    command = f"{exports}; exec bash {shlex.quote(_to_bash_path(script))}" if exports else f'exec bash {shlex.quote(_to_bash_path(script))}'
     return subprocess.run([bash, "-lc", command], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False)
 
 
