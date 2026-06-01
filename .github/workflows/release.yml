@@ -60,7 +60,12 @@ jobs:
       - name: Smoke check --version (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: ./dist/mid-linux-amd64 --version
+        run: |
+          version_out="$(./dist/mid-linux-amd64 --version)"
+          if ! echo "$version_out" | grep -q "mid"; then
+            echo "ERROR: version output did not include expected marker"
+            exit 1
+          fi
 
       - name: Generate smoke .docx (cross-platform)
         shell: python

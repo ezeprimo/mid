@@ -18,7 +18,11 @@ STANZA_BEGIN="# >>> mid installer path >>>"
 STANZA_END="# <<< mid installer path <<<"
 SMOKE_PATTERN="${MID_SMOKE_PATTERN:-mid}"
 DISABLE_PERSIST_PATH_UPDATE="${MID_DISABLE_PERSIST_PATH_UPDATE:-0}"
-PYTHON_BIN="${MID_PYTHON_BIN:-python}"
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="${MID_PYTHON_BIN:-python3}"
+else
+  PYTHON_BIN="${MID_PYTHON_BIN:-python}"
+fi
 
 normalize_requested_version() {
   local value="$1"

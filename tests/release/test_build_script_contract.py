@@ -24,3 +24,10 @@ def test_windows_build_script_bundles_runtime_conversion_dependencies() -> None:
     assert '"--hidden-import", "markitdown"' in content
     assert '"--collect-data", "magika"' in content
     assert '"--exclude-module", "onnxruntime"' not in content
+
+
+def test_windows_build_script_uses_python_module_invocation_for_pyinstaller() -> None:
+    content = _read("scripts/build.ps1")
+
+    assert "Get-Command pyinstaller" not in content
+    assert "-m PyInstaller" in content

@@ -61,7 +61,6 @@ if ($Clean -or (Test-Path "build") -or (Test-Path $OutputDir)) {
 }
 
 # ---- prerequisites ---------------------------------------------------------
-$null = Get-Command pyinstaller -ErrorAction Stop | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 Write-Host "Building mid-windows-amd64.exe ..."
