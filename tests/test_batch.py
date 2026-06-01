@@ -7,12 +7,9 @@ import sys
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 
 from mid.cli import main
-from mid.models import ConvertResult
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +39,6 @@ def _run(args: list[str]) -> tuple[int, str, str]:
 
 
 class TestBatchArgumentErrors:
-
     def test_no_input_dir(self) -> None:
         code, out, err = _run(["batch"])
         assert code == 2
@@ -83,9 +79,11 @@ class TestBatchArgumentErrors:
 
 
 class TestBatchBasic:
-
     def test_processes_supported_files_only(
-        self, tmp_path: Path, sample_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        sample_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "out"
         code, out, err = _run(["batch", str(sample_dir), "-o", str(output)])
@@ -96,7 +94,10 @@ class TestBatchBasic:
         assert not (output / "notes.md").exists()  # .txt skipped
 
     def test_summary_report(
-        self, tmp_path: Path, sample_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        sample_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "out"
         code, out, err = _run(["batch", str(sample_dir), "-o", str(output)])
@@ -107,7 +108,10 @@ class TestBatchBasic:
         assert "Skipped: 1" in out
 
     def test_ignores_subdirectories(
-        self, tmp_path: Path, nested_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        nested_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "out"
         code, out, err = _run(["batch", str(nested_dir), "-o", str(output)])
@@ -119,7 +123,10 @@ class TestBatchBasic:
         assert "Processed: 1" in out
 
     def test_output_dir_is_created(
-        self, tmp_path: Path, sample_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        sample_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "new-dir" / "out"
         code, out, err = _run(["batch", str(sample_dir), "-o", str(output)])
@@ -132,28 +139,45 @@ class TestBatchBasic:
 
 
 class TestBatchRecursivePreserve:
-
     def test_preserves_structure(
-        self, tmp_path: Path, nested_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        nested_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "out"
-        code, out, err = _run([
-            "batch", str(nested_dir), "-o", str(output),
-            "--recursive", "--preserve",
-        ])
+        code, out, err = _run(
+            [
+                "batch",
+                str(nested_dir),
+                "-o",
+                str(output),
+                "--recursive",
+                "--preserve",
+            ]
+        )
         assert code == 0
         assert (output / "root.md").exists()
         assert (output / "sub" / "sub.md").exists()
         assert (output / "sub" / "sub2" / "deep.md").exists()
 
     def test_summary_counts_all(
-        self, tmp_path: Path, nested_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        nested_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "out"
-        code, out, err = _run([
-            "batch", str(nested_dir), "-o", str(output),
-            "--recursive", "--preserve",
-        ])
+        code, out, err = _run(
+            [
+                "batch",
+                str(nested_dir),
+                "-o",
+                str(output),
+                "--recursive",
+                "--preserve",
+            ]
+        )
         assert "Processed: 3" in out
         assert "Succeeded: 3" in out
 
@@ -164,15 +188,23 @@ class TestBatchRecursivePreserve:
 
 
 class TestBatchRecursiveFlatten:
-
     def test_flattens_structure(
-        self, tmp_path: Path, nested_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        nested_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "out"
-        code, out, err = _run([
-            "batch", str(nested_dir), "-o", str(output),
-            "--recursive", "--flatten",
-        ])
+        code, out, err = _run(
+            [
+                "batch",
+                str(nested_dir),
+                "-o",
+                str(output),
+                "--recursive",
+                "--flatten",
+            ]
+        )
         assert code == 0
         assert (output / "root.md").exists()
         assert (output / "sub.md").exists()
@@ -182,13 +214,22 @@ class TestBatchRecursiveFlatten:
         assert not (output / "sub").exists() or not (output / "sub").is_dir()
 
     def test_collision_uses_parent_prefix(
-        self, tmp_path: Path, collision_dir: Path, mock_convert_success,
+        self,
+        tmp_path: Path,
+        collision_dir: Path,
+        mock_convert_success,
     ) -> None:
         output = tmp_path / "out"
-        code, out, err = _run([
-            "batch", str(collision_dir), "-o", str(output),
-            "--recursive", "--flatten",
-        ])
+        code, out, err = _run(
+            [
+                "batch",
+                str(collision_dir),
+                "-o",
+                str(output),
+                "--recursive",
+                "--flatten",
+            ]
+        )
         assert code == 0
 
         # First report.docx from root → report.md
@@ -202,6 +243,42 @@ class TestBatchRecursiveFlatten:
         md_files = list(output.glob("*.md"))
         assert len(md_files) == 3
 
+    def test_deep_collisions_resolve_to_unique_names(
+        self,
+        tmp_path: Path,
+        mock_convert_success,
+    ) -> None:
+        collision_dir = tmp_path / "collision-deep"
+        collision_dir.mkdir()
+
+        (collision_dir / "report.docx").write_text("root", encoding="utf-8")
+
+        (collision_dir / "a" / "same").mkdir(parents=True)
+        (collision_dir / "a" / "same" / "report.docx").write_text("a same", encoding="utf-8")
+
+        (collision_dir / "b" / "same").mkdir(parents=True)
+        (collision_dir / "b" / "same" / "report.docx").write_text("b same", encoding="utf-8")
+
+        output = tmp_path / "out"
+        code, out, err = _run(
+            [
+                "batch",
+                str(collision_dir),
+                "-o",
+                str(output),
+                "--recursive",
+                "--flatten",
+            ]
+        )
+        assert code == 0
+
+        assert (output / "report.md").exists()
+        assert (output / "a-same-report.md").exists()
+        assert (output / "b-same-report.md").exists()
+
+        md_files = sorted(p.name for p in output.glob("*.md"))
+        assert md_files == ["a-same-report.md", "b-same-report.md", "report.md"]
+
 
 # ===========================================================================
 # Non-fatal errors in batch
@@ -209,9 +286,10 @@ class TestBatchRecursiveFlatten:
 
 
 class TestBatchNonFatal:
-
     def test_failure_continues_processing(
-        self, tmp_path: Path, mock_convert_failure,
+        self,
+        tmp_path: Path,
+        mock_convert_failure,
     ) -> None:
         d = tmp_path / "indir"
         d.mkdir()
@@ -221,7 +299,7 @@ class TestBatchNonFatal:
         output = tmp_path / "out"
         code, out, err = _run(["batch", str(d), "-o", str(output)])
 
-        assert code == 0  # batch always exits 0
+        assert code == 1  # non-zero when any file fails
         assert "Succeeded: 0" in out
         assert "Failed: 2" in out
         assert not (output / "a.md").exists()  # not written on failure
@@ -243,7 +321,9 @@ class TestBatchRealE2E:
             )
 
     def test_real_docx_batch_writes_markdown_and_reports_summary(
-        self, tmp_path: Path, make_docx,
+        self,
+        tmp_path: Path,
+        make_docx,
     ) -> None:
         self._require_markitdown()
 

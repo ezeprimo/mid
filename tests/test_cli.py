@@ -13,7 +13,6 @@ from unittest.mock import patch
 import pytest
 
 from mid.cli import main
-from mid.models import ConvertResult
 
 
 # ---------------------------------------------------------------------------
@@ -55,16 +54,24 @@ class TestVersion:
 
 
 class TestListFormats:
-    def test_lists_all_seven(self) -> None:
+    def test_supported_and_legacy_separated(self) -> None:
         code, out, err = _run(["--list-formats"])
         assert code == 0
-        for ext in (".docx", ".xlsx", ".pptx", ".pdf", ".doc", ".xls", ".ppt"):
-            assert ext in out
+        assert "Supported:" in out
+        assert "Legacy (migrate first):" in out
+        assert out.index("Supported:") < out.index("Legacy (migrate first):")
 
-    def test_format_order(self) -> None:
+    def test_supported_formats_present(self) -> None:
         code, out, err = _run(["--list-formats"])
-        formats = out.strip().split()
-        assert formats == sorted(formats)
+        supported_line = [ln for ln in out.splitlines() if ln.startswith("Supported:")][0]
+        for ext in (".docx", ".xlsx", ".pptx", ".pdf"):
+            assert ext in supported_line
+
+    def test_legacy_formats_present(self) -> None:
+        code, out, err = _run(["--list-formats"])
+        legacy_line = [ln for ln in out.splitlines() if ln.startswith("Legacy")][0]
+        for ext in (".doc", ".xls", ".ppt"):
+            assert ext in legacy_line
 
 
 # ===========================================================================
@@ -73,7 +80,6 @@ class TestListFormats:
 
 
 class TestConvertErrors:
-
     def test_no_file_argument(self) -> None:
         code, out, err = _run(["convert"])
         assert code == 2
@@ -103,7 +109,6 @@ class TestConvertErrors:
 
 
 class TestConvertSuccess:
-
     def test_stdout_output(self, tmp_path: Path) -> None:
         """Default output goes to stdout."""
         src = tmp_path / "test.docx"
@@ -133,6 +138,39 @@ class TestConvertSuccess:
         assert code == 0
         assert out == ""  # nothing on stdout
         assert dst.read_text(encoding="utf-8") == "# File output"
+
+    def test_output_file_creates_missing_parent_dirs(self, tmp_path: Path) -> None:
+        """-o creates missing parent directories before writing."""
+        src = tmp_path / "test.docx"
+        src.write_text("", encoding="utf-8")
+        dst = tmp_path / "nested" / "missing" / "out.md"
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = "# Nested output"
+
+            code, out, err = _run(["convert", str(src), "-o", str(dst)])
+
+        assert code == 0
+        assert out == ""
+        assert err == ""
+        assert dst.read_text(encoding="utf-8") == "# Nested output"
+
+    def test_output_write_failure_uses_cli_error_path(self, tmp_path: Path) -> None:
+        """Write failures should exit with conversion error, not traceback."""
+        src = tmp_path / "test.docx"
+        src.write_text("", encoding="utf-8")
+        dst = tmp_path / "out.md"
+
+        with patch("markitdown.MarkItDown") as MockMD, patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = "# File output"
+
+            code, out, err = _run(["convert", str(src), "-o", str(dst)])
+
+        assert code == 1
+        assert "conversion failed" in err.lower()
+        assert "could not write output file" in err.lower()
 
     def test_json_output_contract(self, tmp_path: Path) -> None:
         """--json emits the standard JSON contract."""
@@ -207,7 +245,6 @@ class TestConvertRealE2E:
 
 
 class TestHelp:
-
     def test_help_short_flag(self) -> None:
         code, out, err = _run(["-h"])
         assert code == 0

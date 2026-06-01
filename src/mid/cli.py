@@ -28,7 +28,8 @@ def setup_parser() -> argparse.ArgumentParser:
         description="Convert documents to Markdown using Microsoft MarkItDown",
     )
     parser.add_argument(
-        "-V", "--version",
+        "-V",
+        "--version",
         action="version",
         version=f"mid {__version__}",
         help="show version and exit",
@@ -127,7 +128,12 @@ def handler_convert(args: argparse.Namespace) -> None:
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     elif args.output:
-        Path(args.output).write_text(result.content, encoding="utf-8")
+        output_path = Path(args.output)
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(result.content, encoding="utf-8")
+        except OSError as exc:
+            _exit_conv(f"could not write output file '{output_path}': {exc}")
     else:
         print(result.content)
 
@@ -188,9 +194,19 @@ def handler_batch(args: argparse.Namespace) -> None:
             elif args.recursive and args.flatten:
                 stem = file_path.stem
                 out_name = f"{stem}.md"
-                if out_name in used_names:
-                    parent = file_path.parent.name
-                    out_name = f"{parent}-{stem}.md"
+
+                rel_parent = file_path.relative_to(input_dir).parent
+                parent_prefix = "-".join(rel_parent.parts)
+                collision_index = 1
+
+                while out_name in used_names or (output_dir / out_name).exists():
+                    base_name = f"{parent_prefix}-{stem}" if parent_prefix else stem
+                    if collision_index == 1:
+                        out_name = f"{base_name}.md"
+                    else:
+                        out_name = f"{base_name}-{collision_index}.md"
+                    collision_index += 1
+
                 used_names.add(out_name)
                 out = output_dir / out_name
             else:
@@ -198,17 +214,20 @@ def handler_batch(args: argparse.Namespace) -> None:
                 out_name = file_path.with_suffix(".md").name
                 out = output_dir / out_name
 
-            # Safety: avoid overwriting an existing collision candidate
-            # (only relevant for flatten — the first write wins)
-            out.write_text(result.content, encoding="utf-8")
-            succeeded += 1
+            try:
+                out.write_text(result.content, encoding="utf-8")
+                succeeded += 1
+            except OSError as exc:
+                print(f"error: {file_path.name}: could not write output '{out}': {exc}", file=sys.stderr)
+                failed += 1
         else:
             msg = result.error or "unknown error"
             print(f"error: {file_path.name}: {msg}", file=sys.stderr)
             failed += 1
 
-    print(f"Processed: {processed}, Succeeded: {succeeded}, "
-          f"Failed: {failed}, Skipped: {skipped}")
+    print(f"Processed: {processed}, Succeeded: {succeeded}, Failed: {failed}, Skipped: {skipped}")
+    if failed:
+        sys.exit(1)
 
 
 # -- help handler ----------------------------------------------------------
@@ -243,8 +262,17 @@ def main() -> None:
 
     # --list-formats is a top-level flag (no subcommand needed)
     if args.list_formats:
-        formats = sorted(REGISTRY.keys())
-        print(" ".join(formats))
+        from mid.converters.legacy import LegacyPlaceholder
+
+        supported = []
+        legacy = []
+        for ext, cls in sorted(REGISTRY.items()):
+            if cls is LegacyPlaceholder:
+                legacy.append(ext)
+            else:
+                supported.append(ext)
+        print(f"Supported: {' '.join(supported)}")
+        print(f"Legacy (migrate first): {' '.join(legacy)}")
         return
 
     # No subcommand → show help
