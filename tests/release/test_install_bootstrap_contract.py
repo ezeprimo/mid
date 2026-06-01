@@ -63,7 +63,8 @@ def _require_bash_command(bash: str, command: str) -> None:
 def _to_bash_path(path: Path) -> str:
     raw = str(path)
     if len(raw) >= 2 and raw[1] == ":":
-        return f"/mnt/{raw[0].lower()}{raw[2:].replace('\\', '/')}"
+        suffix = raw[2:].replace("\\", "/")
+        return f"/mnt/{raw[0].lower()}{suffix}"
     return raw.replace("\\", "/")
 
 
