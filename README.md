@@ -138,6 +138,32 @@ This repo ships a project-local agent skill for tools that support repo-distribu
 2. If your runtime uses a personal skills directory, copy or symlink the `skills/mid-cli/` folder into that directory.
 3. Reload or restart your agent runtime after installing the skill so it refreshes skill discovery.
 
+### Optional installer helpers
+
+Linux / macOS / WSL:
+
+```bash
+bash ./scripts/install-skill.sh opencode
+bash ./scripts/install-skill.sh claude --mode symlink
+bash ./scripts/install-skill.sh agents
+```
+
+Windows PowerShell:
+
+```powershell
+./scripts/install-skill.ps1 -Runtime opencode
+./scripts/install-skill.ps1 -Runtime claude -Mode symlink
+./scripts/install-skill.ps1 -Runtime agents
+```
+
+These helpers install the `mid-cli` skill into the default global skill directories for:
+
+- OpenCode: `~/.config/opencode/skills/mid-cli`
+- Claude-compatible external skills: `~/.claude/skills/mid-cli`
+- Agents-compatible external skills: `~/.agents/skills/mid-cli`
+
+Restart the target runtime after installation so it reloads skills.
+
 This skill is distributed with the repo on purpose: agents should learn the real `mid` workflow from the source project, including `.venv` usage, release-installer limits, and real conversion validation.
 
 ## Current status and scope

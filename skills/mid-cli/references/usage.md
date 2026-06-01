@@ -61,6 +61,34 @@ $env:MID_VERSION = "v1.2.3"
 irm https://raw.githubusercontent.com/ezeprimo/mid/main/install.ps1 | iex
 ```
 
+## Skill installation helpers
+
+Use the repo helpers when you want to install this skill into a user-level agent runtime.
+
+Linux / macOS / WSL:
+
+```bash
+bash ./scripts/install-skill.sh opencode
+bash ./scripts/install-skill.sh claude --mode symlink
+bash ./scripts/install-skill.sh agents
+```
+
+Windows PowerShell:
+
+```powershell
+./scripts/install-skill.ps1 -Runtime opencode
+./scripts/install-skill.ps1 -Runtime claude -Mode symlink
+./scripts/install-skill.ps1 -Runtime agents
+```
+
+Default target directories:
+
+- OpenCode: `~/.config/opencode/skills/`
+- Claude-compatible external skills: `~/.claude/skills/`
+- Agents-compatible external skills: `~/.agents/skills/`
+
+Restart the target runtime after installation so it rescans available skills.
+
 ## Format guidance
 
 - Supported modern formats for this project contract: `.docx`, `.xlsx`, `.pptx`, `.pdf`
