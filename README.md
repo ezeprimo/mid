@@ -166,6 +166,52 @@ Restart the target runtime after installation so it reloads skills.
 
 This skill is distributed with the repo on purpose: agents should learn the real `mid` workflow from the source project, including `.venv` usage, release-installer limits, and real conversion validation.
 
+## Docker
+
+Container resources live under `docker/`.
+
+The Docker image now uses a multi-stage build: the builder stage compiles a standalone Linux binary with PyInstaller, and the runtime stage ships only the `mid` command on `debian:bookworm-slim`.
+
+### Build
+
+```bash
+docker build -f docker/Dockerfile -t mid .
+```
+
+### Usage
+
+Mount your host documents as a volume and refer to them with container paths:
+
+```bash
+# Show help and version
+docker run --rm mid
+docker run --rm mid --version
+docker run --rm mid --list-formats
+
+# Convert a single file (mount the directory containing your file)
+docker run --rm -v /path/to/docs:/docs mid convert /docs/report.docx -o /docs/report.md
+
+# Batch convert a directory
+docker run --rm -v /path/to/docs:/docs mid batch /docs -o /docs/out --recursive --preserve
+```
+
+> On Windows PowerShell, volume paths use the host syntax:
+> `docker run --rm -v D:\docs:/docs mid batch /docs`
+
+For the detailed Docker guide and future LibreOffice extension notes, see `docker/README.md`.
+
+### Future: legacy format support
+
+Add LibreOffice to the image to unlock `.doc`, `.xls`, `.ppt` conversion:
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-common libreoffice-writer \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+Rebuild and run — no other configuration needed. The image is structured with this extension point ready.
+
 ## Current status and scope
 
 - Early-stage CLI project focused on reliable document-to-Markdown conversion.
