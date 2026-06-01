@@ -8,6 +8,10 @@ dynamic = ["version"]
 description = "CLI document to Markdown converter using Microsoft MarkItDown"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+    {name = "Ezequiel Primon", email = "ezeprimo@gmail.com"},
+]
 dependencies = [
     "markitdown>=0.1.0",
 ]
