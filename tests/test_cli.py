@@ -73,6 +73,20 @@ class TestListFormats:
         for ext in (".doc", ".xls", ".ppt"):
             assert ext in legacy_line
 
+    def test_output_format_contract(self) -> None:
+        """Verify exact output shape (2 lines, space-separated extensions)."""
+        code, out, err = _run(["--list-formats"])
+        assert code == 0
+        lines = out.strip().splitlines()
+        assert len(lines) == 2
+        supported_line = lines[0]
+        legacy_line = lines[1]
+        assert supported_line.startswith("Supported:")
+        assert legacy_line.startswith("Legacy (migrate first):")
+        # Each extension should be separated by a single space
+        supported_exts = supported_line.replace("Supported: ", "").split()
+        assert all(e.startswith(".") for e in supported_exts)
+
 
 # ===========================================================================
 # convert command — error paths
@@ -103,6 +117,28 @@ class TestConvertErrors:
         code, out, err = _run(["convert", str(src)])
         assert code == 3
         assert "legacy" in err.lower()
+
+    def test_json_with_conversion_failure(self, tmp_path: Path) -> None:
+        """--json with a conversion failure should still exit 1 with no JSON output."""
+        src = tmp_path / "broken.docx"
+        src.write_text("garbage", encoding="utf-8")
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.side_effect = RuntimeError("corrupt file")
+
+            code, out, err = _run(["convert", str(src), "--json"])
+
+        assert code == 1
+        assert out == ""  # no JSON output on failure
+
+    def test_extensionless_file_returns_unsupported(self, tmp_path: Path) -> None:
+        """A real file without extension should exit 3 with unsupported format."""
+        src = tmp_path / "Makefile"
+        src.write_text("some content", encoding="utf-8")
+        code, out, err = _run(["convert", str(src)])
+        assert code == 3
+        assert "unsupported format" in err.lower()
 
 
 # ===========================================================================
@@ -206,6 +242,25 @@ class TestConvertSuccess:
 
         assert code == 1
         assert "conversion failed" in err.lower()
+
+    def test_json_precedence_over_output_file(self, tmp_path: Path) -> None:
+        """When both --json and -o are passed, --json wins (stdout)."""
+        src = tmp_path / "test.docx"
+        src.write_text("", encoding="utf-8")
+        dst = tmp_path / "out.md"
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = "# JSON wins"
+
+            code, out, err = _run(["convert", str(src), "--json", "-o", str(dst)])
+
+        assert code == 0
+        # JSON on stdout
+        payload = json.loads(out)
+        assert payload["content"] == "# JSON wins"
+        # -o file should NOT be written when --json is used
+        assert not dst.exists()
 
 
 class TestConvertRealE2E:

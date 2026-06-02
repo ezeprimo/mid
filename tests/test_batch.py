@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -306,6 +307,63 @@ class TestBatchRecursiveFlatten:
 
         md_files = sorted(p.name for p in output.glob("*.md"))
         assert md_files == ["a-same-report.md", "b-same-report.md", "report.md"]
+
+    def test_flatten_collision_index_greater_than_one(
+        self,
+        tmp_path: Path,
+        mock_convert_success,
+    ) -> None:
+        """Three files with same stem in same parent force collision_index > 1."""
+        d = tmp_path / "collision-deep-index"
+        d.mkdir()
+        (d / "report.docx").write_text("report docx", encoding="utf-8")
+        (d / "report.xlsx").write_text("report xlsx", encoding="utf-8")
+        (d / "report.pptx").write_text("report pptx", encoding="utf-8")
+
+        output = tmp_path / "out"
+        code, out, err = _run(
+            [
+                "batch",
+                str(d),
+                "-o",
+                str(output),
+                "--recursive",
+                "--flatten",
+            ]
+        )
+        assert code == 0
+
+        md_files = sorted(p.name for p in output.glob("*.md"))
+        assert "report.md" in md_files
+        assert len(md_files) == 3
+
+
+# ===========================================================================
+# Symlinks
+# ===========================================================================
+
+
+class TestBatchSymlinks:
+    @pytest.mark.skipif(
+        os.name == "nt" and not os.environ.get("MSYSTEM"),
+        reason="symlink support unreliable on Windows without MSYS",
+    )
+    def test_symlink_to_supported_file_is_included(
+        self, tmp_path: Path, mock_convert_success
+    ) -> None:
+        """Symlink to a .docx should be processed in batch."""
+        d = tmp_path / "input"
+        d.mkdir()
+        real_file = tmp_path / "real.docx"
+        real_file.write_text("real", encoding="utf-8")
+        link = d / "link.docx"
+        link.symlink_to(real_file)
+
+        output = tmp_path / "out"
+        code, out, err = _run(["batch", str(d), "-o", str(output)])
+
+        assert code == 0
+        assert (output / "link.md").exists()
 
 
 # ===========================================================================
