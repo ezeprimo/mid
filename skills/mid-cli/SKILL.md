@@ -4,51 +4,50 @@ description: "Trigger: mid, MarkItDown, convert document to markdown, .docx, .pd
 license: Apache-2.0
 metadata:
   author: gentleman-programming
-  version: "1.0"
+  version: "2.0"
 ---
 
 # mid CLI
 
 ## Activation Contract
 
-Use this skill when working with the `mid` document-to-Markdown CLI: running conversions, validating supported formats, checking packaged binaries, or helping users install and use `mid` correctly.
+Use this skill when working with the `mid` document-to-Markdown CLI: installing `mid`, running single-file conversions, processing batch directories, validating supported formats, or helping users use `mid` correctly.
 
 ## Hard Rules
 
-- In this repo, use the project-local `.venv` for Python commands and dependency installs.
-- For repo development, prefer `python -m mid` or the editable install inside `.venv`; do not claim release installers work unless a real GitHub Release exists.
-- For packaging validation, run the built binary from `dist/` and prove a real conversion works, not only `--help` or `--version`.
-- Supported production formats are `.docx`, `.xlsx`, `.pptx`, and `.pdf`.
+- Always verify a real conversion, not only `--help` or `--version`.
+- Use `mid --list-formats` to discover supported formats at runtime.
+- When `-o` is absent, output goes to stdout; use `-o <file>` to write to file.
+- Check exit codes: 0 success, 1 conversion error, 2 argument error, 3 unsupported format.
+- If `mid` is not found on PATH, install via bootstrap installer.
+- Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Legacy Office formats `.doc`, `.xls`, and `.ppt` are intentionally rejected; report that users must migrate them first.
-- Keep temporary inputs and outputs under a temp/work directory, never in the repo root.
 
 ## Decision Gates
 
 | Situation | Action |
 | --- | --- |
-| Repo development or tests | Activate `.venv`, install editable package, run `mid` from local Python environment. |
-| Linux/WSL packaging validation | Build `dist/mid-linux-amd64`, then run a real conversion with that binary. |
-| Windows packaging validation | Build `dist/mid-windows-amd64.exe`, then run a real conversion with that executable. |
-| User asks for bootstrap install | Use `install.sh` or `install.ps1` only for published releases. |
+| `mid` not found on PATH | Install via bootstrap installer. |
+| Single file conversion | `mid convert <file> [-o <output>] [--json]` |
+| Batch directory conversion | `mid batch <input> -o <output> [--recursive --preserve\|--recursive --flatten]` |
+| Check supported formats | `mid --list-formats` |
+| Need inline help | `mid help <command>` |
 | Legacy `.doc/.xls/.ppt` input | Stop and explain the format is intentionally unsupported for conversion. |
 
 ## Execution Steps
 
-1. Identify whether the task is repo development, local binary validation, or published-release installation.
-2. Choose the runtime:
-   - repo/dev: local `.venv`
-   - packaging check: `dist/` binary
-   - published install: bootstrap script or package install
-3. Verify the CLI entry point with `mid --help` or `--version`, then run the real conversion command.
-4. Prefer explicit output paths such as `mid convert input.docx -o ./tmp/output.md`.
-5. Inspect the generated Markdown and report whether content, output file creation, and format handling behaved correctly.
-6. If conversion fails, report the concrete runtime dependency or packaging issue instead of claiming the format is unsupported.
+1. Check if `mid` is installed: `mid --version`. If found, use the system binary.
+2. If not found, install via bootstrap installer.
+3. For single file: `mid convert <file> [-o <output>] [--json]`
+4. For batch: `mid batch <dir> -o <outdir> [--recursive --preserve | --recursive --flatten]`
+5. Always verify a real conversion works (not just `--help`).
+6. Use exit codes to decide next action.
 
 ## Output Contract
 
-Return the runtime used (`.venv`, built binary, or release install), the exact command executed, the input/output paths, whether the conversion was real or mocked, and any warnings or packaging gaps discovered.
+Return how `mid` was resolved (binary path from `which mid` or `where mid`, `mid --version` output), the exact command executed, the input/output paths, whether the conversion was real or mocked, and any warnings or issues found.
 
 ## References
 
-- `skills/mid-cli/references/usage.md` — canonical command patterns for repo, binary, and release usage.
+- `skills/mid-cli/references/usage.md` — canonical command patterns for installation, single-file, batch, and release usage.
 - `README.md` — public CLI usage, supported formats, and install flows.
