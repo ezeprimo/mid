@@ -90,8 +90,10 @@ class TestConvertErrors:
         assert code == 2
         assert "file not found" in err.lower()
 
-    def test_unsupported_format(self) -> None:
-        code, out, err = _run(["convert", "image.png"])
+    def test_unsupported_format(self, tmp_path: Path) -> None:
+        src = tmp_path / "image.png"
+        src.write_text("fake", encoding="utf-8")
+        code, out, err = _run(["convert", str(src)])
         assert code == 3
         assert "unsupported format" in err.lower()
 
