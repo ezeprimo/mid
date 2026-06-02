@@ -9,6 +9,7 @@ description = "CLI document to Markdown converter using Microsoft MarkItDown"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     {name = "Ezequiel Primon", email = "ezeprimo@gmail.com"},
 ]
@@ -19,7 +20,6 @@ keywords = ["cli", "markdown", "document-conversion", "markitdown", "office"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
