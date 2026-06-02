@@ -348,9 +348,7 @@ class TestBatchSymlinks:
         os.name == "nt" and not os.environ.get("MSYSTEM"),
         reason="symlink support unreliable on Windows without MSYS",
     )
-    def test_symlink_to_supported_file_is_included(
-        self, tmp_path: Path, mock_convert_success
-    ) -> None:
+    def test_symlink_to_supported_file_is_included(self, tmp_path: Path, mock_convert_success) -> None:
         """Symlink to a .docx should be processed in batch."""
         d = tmp_path / "input"
         d.mkdir()
@@ -485,6 +483,7 @@ class TestBatchWriteFailure:
 
         from pathlib import Path as P
         from unittest.mock import patch as p
+
         with p.object(P, "write_text", side_effect=OSError("disk full")):
             code, out, err = _run(["batch", str(d), "-o", str(output)])
 
