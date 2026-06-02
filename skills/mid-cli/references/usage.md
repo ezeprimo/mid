@@ -1,48 +1,49 @@
 # mid CLI agent usage reference
 
-## Repo development flow
-
-Use the project-local environment for source-based work:
+## Verify installation
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e . "markitdown[all]"
-mid --help
-mid convert ./tmp/sample.docx -o ./tmp/sample.md
+mid --version
+mid --list-formats
 ```
 
-Windows PowerShell activation:
+If `mid` is not found, see [Install from Release](#install-from-release).
 
-```powershell
-./.venv/Scripts/Activate.ps1
-python -m pip install -e . "markitdown[all]"
-mid convert .\tmp\sample.docx -o .\tmp\sample.md
-```
-
-## Packaged binary validation
-
-Linux / WSL:
+## Single-file conversion
 
 ```bash
-chmod +x scripts/build.sh
-bash ./scripts/build.sh --clean --output-dir dist
-./dist/mid-linux-amd64 --version
-./dist/mid-linux-amd64 convert ./tmp/sample.docx -o ./tmp/sample.md
+# Write output to stdout
+mid convert ./docs/report.docx
+
+# Write output to a file
+mid convert ./docs/report.docx -o ./out/report.md
+
+# Emit JSON with metadata (content under "content" key)
+mid convert ./docs/report.docx --json
 ```
 
-Windows PowerShell:
+When `-o` is absent, output goes to stdout. When `-o` is provided, content is written to the specified file. The `--json` flag wraps content and metadata in a structured JSON payload regardless of `-o`. When `--json` is provided, output always goes to stdout and any `-o` flag is silently ignored.
 
-```powershell
-./scripts/build.ps1 -Clean -OutputDir dist
-.\dist\mid-windows-amd64.exe --version
-.\dist\mid-windows-amd64.exe convert .\tmp\sample.docx -o .\tmp\sample.md
+## Batch conversion
+
+```bash
+# Convert all supported files in a directory (non-recursive)
+mid batch ./docs -o ./out
+
+# Recursive with preserved directory structure
+mid batch ./docs -o ./out --recursive --preserve
+
+# Recursive with flattened output (no subdirectories)
+mid batch ./docs -o ./out --recursive --flatten
 ```
 
-Do not stop at `--version` or `--help`. A valid packaging check requires a real conversion.
+Flag constraints:
+- `--recursive` requires `--preserve` or `--flatten` (to prevent data loss from overwrites).
+- `--flatten` **requires** `--recursive` (error if used alone).
+- `--preserve` requires `--recursive` (error if used alone).
+- `-o / --output` is required for batch mode.
 
-## Published release install flow
+## Install from Release
 
 Use bootstrap installers only when the requested version exists as a GitHub Release.
 
@@ -61,37 +62,26 @@ $env:MID_VERSION = "v1.2.3"
 irm https://raw.githubusercontent.com/ezeprimo/mid/main/install.ps1 | iex
 ```
 
-## Skill installation helpers
-
-Use the repo helpers when you want to install this skill into a user-level agent runtime.
-
-Linux / macOS / WSL:
-
-```bash
-bash ./scripts/install-skill.sh opencode
-bash ./scripts/install-skill.sh claude --mode symlink
-bash ./scripts/install-skill.sh agents
-```
-
-Windows PowerShell:
-
-```powershell
-./scripts/install-skill.ps1 -Runtime opencode
-./scripts/install-skill.ps1 -Runtime claude -Mode symlink
-./scripts/install-skill.ps1 -Runtime agents
-```
-
-Default target directories:
-
-- OpenCode: `~/.config/opencode/skills/`
-- Claude-compatible external skills: `~/.claude/skills/`
-- Agents-compatible external skills: `~/.agents/skills/`
-
-Restart the target runtime after installation so it rescans available skills.
-
 ## Format guidance
 
-- Supported modern formats for this project contract: `.docx`, `.xlsx`, `.pptx`, `.pdf`
+- Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Legacy formats intentionally rejected: `.doc`, `.xls`, `.ppt`
 
-If the task is to prove support, use a real sample file and inspect the generated Markdown.
+For the authoritative list at runtime, run `mid --list-formats`.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | Conversion error (MarkItDown / converter failure) |
+| 2 | Argument error (missing file, invalid flag, etc.) |
+| 3 | Unsupported format (including legacy `.doc` / `.xls` / `.ppt`) |
+
+## Inline help
+
+```bash
+mid help convert
+mid help batch
+mid --list-formats
+```
