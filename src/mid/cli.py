@@ -182,7 +182,10 @@ def handler_batch(args: argparse.Namespace) -> None:
 
     # Discover files
     if args.recursive:
-        all_entries = list(input_dir.rglob("*"))
+        try:
+            all_entries = list(input_dir.rglob("*"))
+        except PermissionError:
+            _exit_arg(f"could not read directory '{input_dir}': permission denied")
     else:
         all_entries = list(input_dir.iterdir())
 
@@ -208,7 +211,13 @@ def handler_batch(args: argparse.Namespace) -> None:
 
         if result.success:
             # Determine output path
-            rel = file_path.relative_to(input_dir) if args.recursive else file_path
+            try:
+                rel = file_path.relative_to(input_dir) if args.recursive else file_path
+            except ValueError:
+                print(f"error: {file_path.name}: path is outside input directory, skipping", file=sys.stderr)
+                failed += 1
+                continue
+
             if args.recursive and args.preserve:
                 out = output_dir / rel.with_suffix(".md")
                 out.parent.mkdir(parents=True, exist_ok=True)
@@ -216,7 +225,12 @@ def handler_batch(args: argparse.Namespace) -> None:
                 stem = file_path.stem
                 out_name = f"{stem}.md"
 
-                rel_parent = file_path.relative_to(input_dir).parent
+                try:
+                    rel_parent = file_path.relative_to(input_dir).parent
+                except ValueError:
+                    print(f"error: {file_path.name}: path is outside input directory, skipping", file=sys.stderr)
+                    failed += 1
+                    continue
                 parent_prefix = "-".join(p for p in rel_parent.parts if p != ".")
                 collision_index = 1
 
