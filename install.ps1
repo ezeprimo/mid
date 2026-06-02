@@ -80,9 +80,9 @@ try {
 
     Install-Atomically -DownloadedPath $downloadedBinary -FinalPath $TargetPath
     $pathResult = Ensure-UserPathContains -PathEntry $InstallDir
-    $pathEntries = $env:Path.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+    $pathEntries = if ($env:Path) { $env:Path.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries) } else { @() }
     if ($pathEntries -notcontains $InstallDir.TrimEnd('\')) {
-        $env:Path = "$InstallDir;$env:Path"
+        $env:Path = if ($env:Path) { "$InstallDir;$env:Path" } else { $InstallDir }
     }
     Write-Host "Installed mid $ResolvedTag to $TargetPath"
     if ($pathResult -eq "updated") { Write-Host "Added $InstallDir to user PATH. Open a new shell before running 'mid'." }
