@@ -243,6 +243,34 @@ class TestBatchRecursiveFlatten:
         md_files = list(output.glob("*.md"))
         assert len(md_files) == 3
 
+    def test_flatten_collision_with_pre_existing_output(
+        self,
+        tmp_path: Path,
+        collision_dir: Path,
+        mock_convert_success,
+    ) -> None:
+        """Pre-existing .md files in output should not break collision resolution."""
+        output = tmp_path / "out"
+        output.mkdir()
+        # Pre-create a file that would collide
+        (output / "report.md").write_text("preexisting", encoding="utf-8")
+
+        code, out, err = _run(
+            [
+                "batch",
+                str(collision_dir),
+                "-o",
+                str(output),
+                "--recursive",
+                "--flatten",
+            ]
+        )
+        assert code == 0
+        # report.md already exists from root — should get a-report.md from a/
+        assert (output / "report.md").exists()
+        # Either a-report.md or a-report-1.md depending on collision resolution
+        assert (output / "a-report.md").exists() or (output / "a-report-1.md").exists()
+
     def test_deep_collisions_resolve_to_unique_names(
         self,
         tmp_path: Path,
@@ -350,3 +378,57 @@ class TestBatchRealE2E:
         assert "Succeeded: 2" in out
         assert "Failed: 0" in out
         assert "Skipped: 1" in out
+
+
+# ===========================================================================
+# Edge cases
+# ===========================================================================
+
+
+class TestBatchEdgeCases:
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        d = tmp_path / "empty"
+        d.mkdir()
+        output = tmp_path / "out"
+        code, out, err = _run(["batch", str(d), "-o", str(output)])
+        assert code == 0
+        assert "Processed: 0" in out
+        assert "Succeeded: 0" in out
+        assert "Skipped: 0" in out
+
+    def test_unsupported_only_directory(self, tmp_path: Path) -> None:
+        d = tmp_path / "unsupported"
+        d.mkdir()
+        (d / "readme.txt").write_text("text", encoding="utf-8")
+        (d / "image.png").write_text("png", encoding="utf-8")
+        output = tmp_path / "out"
+        code, out, err = _run(["batch", str(d), "-o", str(output)])
+        assert code == 0
+        assert "Processed: 0" in out
+        assert "Skipped: 2" in out
+
+    def test_output_path_is_existing_file(self, tmp_path: Path) -> None:
+        d = tmp_path / "indir"
+        d.mkdir()
+        (d / "test.docx").write_text("", encoding="utf-8")
+        existing_file = tmp_path / "out.txt"
+        existing_file.write_text("", encoding="utf-8")
+        code, out, err = _run(["batch", str(d), "-o", str(existing_file)])
+        assert code == 2
+        assert "not a directory" in err.lower()
+
+
+class TestBatchWriteFailure:
+    def test_write_failure_reported(self, tmp_path: Path, mock_convert_success) -> None:
+        d = tmp_path / "indir"
+        d.mkdir()
+        (d / "test.docx").write_text("", encoding="utf-8")
+        output = tmp_path / "out"
+
+        from pathlib import Path as P
+        from unittest.mock import patch as p
+        with p.object(P, "write_text", side_effect=OSError("disk full")):
+            code, out, err = _run(["batch", str(d), "-o", str(output)])
+
+        assert code == 1
+        assert "Failed: 1" in out

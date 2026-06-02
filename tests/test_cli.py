@@ -276,3 +276,31 @@ class TestHelp:
     def test_help_unknown_topic(self) -> None:
         code, out, err = _run(["help", "nosuch"])
         assert code == 2
+
+
+# ===========================================================================
+# Edge cases
+# ===========================================================================
+
+
+class TestMainNoArgs:
+    def test_no_args_shows_help(self) -> None:
+        code, out, err = _run([])
+        assert code == 0
+        assert "usage:" in out.lower() or "convert" in out
+
+
+class TestConvertDirectory:
+    def test_convert_directory_returns_arg_error(self, tmp_path: Path) -> None:
+        d = tmp_path / "somedir"
+        d.mkdir()
+        code, out, err = _run(["convert", str(d)])
+        assert code == 2
+        assert "not a file" in err.lower()
+
+
+class TestListFormatsWithSubcommand:
+    def test_with_subcommand_ignored(self) -> None:
+        code, out, err = _run(["--list-formats", "convert"])
+        assert code == 0
+        assert "Supported:" in out
