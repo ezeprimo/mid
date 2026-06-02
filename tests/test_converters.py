@@ -83,6 +83,37 @@ class TestMarkitDownConverter:
         assert result.success is True
         assert result.content == ""
 
+    def test_markitdown_returns_none(self, tmp_path: Path) -> None:
+        """If MarkItDown returns None, the result guard handles it gracefully."""
+        src = tmp_path / "test.docx"
+        src.write_text("", encoding="utf-8")
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value = None
+
+            converter = MarkitDownConverter()
+            result = converter.convert(src)
+
+        assert result.success is True
+        assert result.content == ""
+
+    def test_markitdown_result_missing_text_content(self, tmp_path: Path) -> None:
+        """If the result is truthy but has no text_content, it's caught gracefully."""
+        src = tmp_path / "test.docx"
+        src.write_text("", encoding="utf-8")
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            # Return a truthy object without text_content
+            inst.convert.return_value = object()
+
+            converter = MarkitDownConverter()
+            result = converter.convert(src)
+
+        assert result.success is False
+        assert result.error is not None
+
 
 # ===========================================================================
 # LegacyPlaceholder
@@ -146,3 +177,27 @@ def test_converter_is_abstract() -> None:
 
     with pytest.raises(TypeError):
         Converter()  # type: ignore[abstract]
+
+
+# ===========================================================================
+# ConvertResult immutability
+# ===========================================================================
+
+
+class TestConvertResult:
+    def test_frozen_dataclass_rejects_mutation(self) -> None:
+        """ConvertResult is frozen — mutation must raise."""
+        from dataclasses import FrozenInstanceError
+        from mid.models import ConvertResult
+
+        result = ConvertResult(content="test", metadata={}, success=True, error=None)
+        with pytest.raises(FrozenInstanceError):
+            result.content = "changed"  # type: ignore[misc]
+
+    def test_metadata_dict_is_mutable(self) -> None:
+        """The metadata dict inside a frozen dataclass is still mutable."""
+        from mid.models import ConvertResult
+
+        result = ConvertResult(content="test", metadata={"key": "val"}, success=True, error=None)
+        result.metadata["new_key"] = "new_val"  # should work despite frozen
+        assert result.metadata["new_key"] == "new_val"

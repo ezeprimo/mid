@@ -164,6 +164,10 @@ def handler_batch(args: argparse.Namespace) -> None:
     if output_dir.exists() and not output_dir.is_dir():
         _exit_arg(f"output path exists and is not a directory: {output_dir}")
 
+    # --recursive requires --preserve or --flatten to avoid silent overwrites
+    if args.recursive and not args.preserve and not args.flatten:
+        _exit_arg("--recursive requires --preserve or --flatten to prevent data loss")
+
     # --flatten without --recursive → error
     if args.flatten and not args.recursive:
         _exit_arg("--flatten requires --recursive")
@@ -205,7 +209,7 @@ def handler_batch(args: argparse.Namespace) -> None:
                 out_name = f"{stem}.md"
 
                 rel_parent = file_path.relative_to(input_dir).parent
-                parent_prefix = "-".join(rel_parent.parts)
+                parent_prefix = "-".join(p for p in rel_parent.parts if p != ".")
                 collision_index = 1
 
                 while out_name in used_names or (output_dir / out_name).exists():

@@ -68,5 +68,11 @@ class TestConvertFile:
         assert "unsupported format" in (result.error or "").lower()
 
     def test_non_existent_file(self) -> None:
-        result = convert_file(Path("no-such-file.docx"))
+        """Non-existent file is handled gracefully via mock."""
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.side_effect = FileNotFoundError("no such file")
+            result = convert_file(Path("no-such-file.docx"))
+
         assert result.success is False
+        assert "not found" in (result.error or "").lower()
