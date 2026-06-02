@@ -114,7 +114,7 @@ ensure_path_stanza() {
   local line="export PATH=\"$install_dir:\$PATH\""
 
   if [[ "$DISABLE_PERSIST_PATH_UPDATE" == "1" ]]; then
-    return 1
+    return 2
   fi
 
   if [[ -w "$profile" || ! -e "$profile" ]]; then
@@ -181,7 +181,7 @@ fi
 curl -fsSL "$BINARY_URL" -o "$BINARY_PATH"
 curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_PATH"
 
-EXPECTED_HASH="$(awk -v n="$ASSET_NAME" '{name=$2; gsub(/\r/, "", name); if (name==n) print tolower($1)}' "$CHECKSUMS_PATH" | head -n 1)"
+EXPECTED_HASH="$(awk -v n="$ASSET_NAME" '{name=$2; gsub(/\r/, "", name); gsub(/^\*/, "", name); if (name==n) print tolower($1)}' "$CHECKSUMS_PATH" | head -n 1)"
 if [[ -z "$EXPECTED_HASH" ]]; then
   show_fallback_guidance "$RESOLVED_TAG" "checksums.txt is missing an entry for '$ASSET_NAME'."
   exit 1
@@ -216,13 +216,16 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   export PATH="$INSTALL_DIR:$PATH"
 fi
 
-if ensure_path_stanza "$INSTALL_DIR" "$PROFILE_FILE"; then
+ensure_path_stanza "$INSTALL_DIR" "$PROFILE_FILE" && path_rc=$? || path_rc=$?
+if [[ "$path_rc" -eq 0 ]]; then
   PATH_UPDATED="true"
 fi
 
 echo "Installed mid $RESOLVED_TAG to $TARGET_PATH"
 if [[ "$PATH_UPDATED" == "true" ]]; then
   echo "Ensured persistent PATH stanza in $PROFILE_FILE. Open a new shell before running 'mid'."
+elif [[ "$path_rc" -eq 2 ]]; then
+  echo "Persistent PATH update disabled via MID_DISABLE_PERSIST_PATH_UPDATE."
 else
   echo "WARNING: Could not update $PROFILE_FILE automatically." >&2
   echo "Add this line manually and open a new shell:" >&2

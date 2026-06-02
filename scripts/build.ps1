@@ -24,6 +24,8 @@ param(
     [string]$OutputDir = "dist"
 )
 
+if (-not $OutputDir) { throw "-OutputDir cannot be empty" }
+
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")

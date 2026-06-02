@@ -37,7 +37,13 @@ function Install-SkillDirectory {
     }
 
     if ($InstallMode -eq "symlink") {
-        New-Item -ItemType SymbolicLink -Path $targetDirectory -Target $SourceDirectory | Out-Null
+        try {
+            New-Item -ItemType SymbolicLink -Path $targetDirectory -Target $SourceDirectory | Out-Null
+        } catch {
+            Write-Warning "Symlink creation failed (need admin/Developer Mode). Falling back to copy mode."
+            Copy-Item -LiteralPath $SourceDirectory -Destination $targetDirectory -Recurse
+            $InstallMode = "copy"
+        }
     }
     else {
         Copy-Item -LiteralPath $SourceDirectory -Destination $targetDirectory -Recurse

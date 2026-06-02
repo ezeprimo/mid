@@ -28,7 +28,7 @@ function Get-ReleaseAssetUrl([object]$Release, [string]$Name) {
 }
 function Get-ExpectedChecksum([string]$ChecksumsPath, [string]$RequiredAssetName) {
     foreach ($line in (Get-Content -LiteralPath $ChecksumsPath)) {
-        if ($line -match "^([a-fA-F0-9]{64})\s+(.+)$" -and $Matches[2].Trim() -eq $RequiredAssetName) { return $Matches[1].ToLowerInvariant() }
+        if ($line -match "^([a-fA-F0-9]{64})\s+\*?(.+)$" -and $Matches[2].TrimStart('* ').Trim() -eq $RequiredAssetName) { return $Matches[1].ToLowerInvariant() }
     }
     throw "checksums.txt is missing an entry for '$RequiredAssetName'."
 }
@@ -50,7 +50,7 @@ function Install-Atomically([string]$DownloadedPath, [string]$FinalPath) {
     Move-Item -LiteralPath $DownloadedPath -Destination $FinalPath -Force
 }
 function Ensure-UserPathContains([string]$PathEntry) {
-    if ($DisablePersistentPathUpdate) { return "disabled-for-test" }
+    if ($DisablePersistentPathUpdate) { return "disabled" }
     $current = [Environment]::GetEnvironmentVariable("Path", "User"); if (-not $current) { $current = "" }
     foreach ($entry in @($current.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries))) { if ($entry.TrimEnd('\\') -ieq $PathEntry.TrimEnd('\\')) { return "already-present" } }
     try { [Environment]::SetEnvironmentVariable("Path", ($(if ($current) { "$current;$PathEntry" } else { $PathEntry })), "User"); return "updated" } catch { return $_.Exception.Message }
@@ -80,10 +80,14 @@ try {
 
     Install-Atomically -DownloadedPath $downloadedBinary -FinalPath $TargetPath
     $pathResult = Ensure-UserPathContains -PathEntry $InstallDir
-    if ($env:Path -notlike "*$InstallDir*") { $env:Path = "$InstallDir;$env:Path" }
+    $pathEntries = $env:Path.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($pathEntries -notcontains $InstallDir.TrimEnd('\')) {
+        $env:Path = "$InstallDir;$env:Path"
+    }
     Write-Host "Installed mid $ResolvedTag to $TargetPath"
     if ($pathResult -eq "updated") { Write-Host "Added $InstallDir to user PATH. Open a new shell before running 'mid'." }
     elseif ($pathResult -eq "already-present") { Write-Host "User PATH already contains $InstallDir. Open a new shell if command is not yet visible." }
+    elseif ($pathResult -eq "disabled") { Write-Host "Persistent PATH update disabled via MID_DISABLE_PERSIST_PATH_UPDATE." }
     else { Write-Warning "Could not update user PATH automatically: $pathResult"; Write-Host "Add this path manually and open a new shell:"; Write-Host "  $InstallDir" }
     Write-Host ""; Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase
 }
