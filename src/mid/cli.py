@@ -104,6 +104,10 @@ def handler_convert(args: argparse.Namespace) -> None:
 
     # THEN resolve converter
     ext = path.suffix.lower()
+
+    if not ext:
+        _exit_fmt("unsupported format (file has no extension)")
+
     converter_cls = resolve_converter(ext)
 
     if converter_cls is None:
@@ -190,7 +194,11 @@ def handler_batch(args: argparse.Namespace) -> None:
     succeeded = 0
     failed = 0
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Create output directory with error handling
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _exit_arg(f"could not create output directory '{output_dir}': {exc}")
 
     # Track used names for collision detection under --flatten
     used_names: set[str] = set()
@@ -225,6 +233,20 @@ def handler_batch(args: argparse.Namespace) -> None:
             else:
                 # Non-recursive: flat output (same name, .md extension)
                 out_name = file_path.with_suffix(".md").name
+
+                # Collision detection — same logic as flatten without parent prefix
+                while out_name in used_names or (output_dir / out_name).exists():
+                    stem = file_path.stem
+                    collision_index = 1
+                    base = f"{stem}"
+                    while True:
+                        candidate = f"{base}-{collision_index}.md"
+                        if candidate not in used_names and not (output_dir / candidate).exists():
+                            out_name = candidate
+                            break
+                        collision_index += 1
+
+                used_names.add(out_name)
                 out = output_dir / out_name
 
             try:
