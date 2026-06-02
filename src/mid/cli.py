@@ -95,14 +95,19 @@ def handler_convert(args: argparse.Namespace) -> None:
         _exit_arg("argument FILE is required")
 
     path = Path(args.file)
+
+    # Validate path existence first — exit 2 for argument errors
+    if not path.exists():
+        _exit_arg(f"file not found: {path}")
+    if not path.is_file():
+        _exit_arg(f"not a file: {path}")
+
+    # THEN resolve converter
     ext = path.suffix.lower()
     converter_cls = resolve_converter(ext)
 
     if converter_cls is None:
         _exit_fmt(f"unsupported format {ext}")
-
-    if not path.exists():
-        _exit_arg(f"file not found: {path}")
 
     from mid.converters.legacy import LegacyPlaceholder
 
@@ -154,6 +159,10 @@ def handler_batch(args: argparse.Namespace) -> None:
         _exit_arg("-o / --output is required for batch mode")
 
     output_dir = Path(args.output)
+
+    # Pre-validate: output must not be an existing file
+    if output_dir.exists() and not output_dir.is_dir():
+        _exit_arg(f"output path exists and is not a directory: {output_dir}")
 
     # --flatten without --recursive → error
     if args.flatten and not args.recursive:

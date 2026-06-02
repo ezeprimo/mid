@@ -14,7 +14,7 @@ authors = [
     {name = "Ezequiel Primon", email = "ezeprimo@gmail.com"},
 ]
 dependencies = [
-    "markitdown>=0.1.0",
+    "markitdown[all]>=0.1.0",
 ]
 keywords = ["cli", "markdown", "document-conversion", "markitdown", "office"]
 classifiers = [
