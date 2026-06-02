@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNTIME="${1:-opencode}"
+RUNTIME="opencode"
 MODE="copy"
 DESTINATION=""
 

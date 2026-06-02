@@ -14,6 +14,10 @@ while (($# > 0)); do
       CLEAN=1
       ;;
     --version)
+      if [[ -z "${2:-}" ]]; then
+        echo "error: --version requires a value" >&2
+        exit 2
+      fi
       VERSION="${2:-}"
       shift
       ;;
@@ -29,6 +33,11 @@ while (($# > 0)); do
   shift
 done
 
+if [[ -z "$OUTPUT_DIR" ]]; then
+  echo "error: --output-dir requires a non-empty value" >&2
+  exit 2
+fi
+
 normalize_version() {
   local v="$1"
   if [[ "$v" == v* ]]; then
@@ -42,8 +51,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+if [[ -f "$REPO_ROOT/.venv/bin/python" ]]; then
+  PYTHON="$REPO_ROOT/.venv/bin/python"
+else
+  PYTHON="python"
+fi
+
 EXPECTED_VERSION="$(normalize_version "$VERSION")"
-PACKAGE_VERSION="$(python -c "from pathlib import Path; ns={}; exec(Path('src/mid/__init__.py').read_text(encoding='utf-8'), ns); print(ns['__version__'])")"
+PACKAGE_VERSION="$("$PYTHON" -c "from pathlib import Path; ns={}; exec(Path('src/mid/__init__.py').read_text(encoding='utf-8'), ns); print(ns['__version__'])")"
 
 if [[ -n "$EXPECTED_VERSION" && "$EXPECTED_VERSION" != "$PACKAGE_VERSION" ]]; then
   echo "error: version mismatch: expected $EXPECTED_VERSION but package is $PACKAGE_VERSION" >&2
@@ -58,7 +73,7 @@ fi
 mkdir -p "$OUTPUT_DIR"
 echo "Building mid-linux-amd64 ..."
 
-python -m PyInstaller --onefile --name mid-linux-amd64 --clean \
+"$PYTHON" -m PyInstaller --onefile --name mid-linux-amd64 --clean \
   --paths src \
   --hidden-import markitdown \
   --collect-data magika \

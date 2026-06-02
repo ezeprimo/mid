@@ -19,7 +19,7 @@ from typing import Any, Mapping, Sequence
 SEMVER_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 WHEEL_RE = re.compile(r"^mid-(?P<version>.+)-py3-none-any\.whl$")
 SDIST_RE = re.compile(r"^mid-(?P<version>.+)\.tar\.gz$")
-CHECKSUM_LINE_RE = re.compile(r"^(?P<sha>[a-fA-F0-9]{64})\s+(?P<name>\S+)$")
+CHECKSUM_LINE_RE = re.compile(r"^(?P<sha>[a-fA-F0-9]{64})\s+\*?(?P<name>\S+)$")
 
 REQUIRED_BINARY_ASSETS = ("mid-windows-amd64.exe", "mid-linux-amd64")
 REQUIRED_ASSETS = REQUIRED_BINARY_ASSETS + ("checksums.txt",)
@@ -95,7 +95,7 @@ def _parse_checksums(checksums_content: str, errors: list[str]) -> dict[str, str
             errors.append(f"Malformed checksum line: {line}")
             continue
 
-        parsed[match.group("name")] = match.group("sha")
+        parsed[match.group("name").lstrip("*")] = match.group("sha")
 
     return parsed
 

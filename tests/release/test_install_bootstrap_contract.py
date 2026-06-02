@@ -260,7 +260,7 @@ def test_windows_bootstrap_installs_to_user_local_path(windows_release_harness: 
     installed = local_app_data / "mid" / "bin" / "mid.exe"
     assert installed.exists()
     assert _sha256(installed) == windows_release_harness.windows_hash
-    assert "Add this path manually and open a new shell:" in result.stdout
+    assert "Persistent PATH update disabled via MID_DISABLE_PERSIST_PATH_UPDATE" in result.stdout
 
 
 def test_linux_bootstrap_and_rollback_runtime_coverage(linux_release_harness: LinuxHarness, tmp_path: Path) -> None:
@@ -350,5 +350,6 @@ def test_linux_integrity_and_path_failure_guidance_is_executed(linux_release_har
         },
     )
     assert path_guidance.returncode == 0, f"stdout:\n{path_guidance.stdout}\n\nstderr:\n{path_guidance.stderr}"
-    assert "Could not update" in path_guidance.stderr
-    assert "Add this line manually and open a new shell" in path_guidance.stderr
+    assert "Could not update" not in path_guidance.stderr
+    assert "Add this line manually and open a new shell" not in path_guidance.stderr
+    assert "mid" in path_guidance.stdout  # verify install still succeeded
