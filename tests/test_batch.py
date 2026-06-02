@@ -474,6 +474,20 @@ class TestBatchEdgeCases:
         assert "not a directory" in err.lower()
 
 
+class TestBatchNonRecursiveCollision:
+    def test_non_recursive_collision_does_not_overwrite(self, tmp_path: Path, mock_convert_success) -> None:
+        """Two files with same stem in non-recursive mode should not overwrite."""
+        d = tmp_path / "indir"
+        d.mkdir()
+        (d / "report.docx").write_text("docx", encoding="utf-8")
+        (d / "report.xlsx").write_text("xlsx", encoding="utf-8")
+        output = tmp_path / "out"
+        code, out, err = _run(["batch", str(d), "-o", str(output)])
+        assert code == 0
+        md_files = list(output.glob("*.md"))
+        assert len(md_files) == 2  # Both preserved, no silent overwrite
+
+
 class TestBatchWriteFailure:
     def test_write_failure_reported(self, tmp_path: Path, mock_convert_success) -> None:
         d = tmp_path / "indir"
