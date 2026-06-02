@@ -38,7 +38,10 @@ class TestMarkitDownConverter:
     def test_file_not_found(self) -> None:
         """Non-existent file returns ConvertResult with error."""
         converter = MarkitDownConverter()
-        result = converter.convert(Path("no-such-file.docx"))
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.side_effect = FileNotFoundError("no such file")
+            result = converter.convert(Path("no-such-file.docx"))
 
         assert result.success is False
         assert "not found" in (result.error or "").lower()
