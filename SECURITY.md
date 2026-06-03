@@ -9,7 +9,7 @@
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in `mid`, please report it by emailing
-38955797+ezeprimo@users.noreply.github.com. Do **not** create a public GitHub issue for security
+ezeprimo.ia@gmail.com. Do **not** create a public GitHub issue for security
 vulnerabilities.
 
 You should receive a response within 48 hours. If you don't, please follow up.
