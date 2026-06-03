@@ -60,10 +60,21 @@ python -m pip install --user "mid==1.2.3"
 - Update to latest stable: clear `MID_VERSION` and rerun the installer.
 - Rollback: set `MID_VERSION=vX.Y.Z` and rerun the same installer command.
 
-### Uninstall (phase 1)
+### Uninstall
 
-- Windows: remove `%LOCALAPPDATA%\mid\bin\mid.exe` and remove `%LOCALAPPDATA%\mid\bin` from user PATH if you no longer need it.
-- Linux: remove `${MID_INSTALL_DIR:-$HOME/.local/bin}/mid` and remove the installer PATH stanza from `~/.profile` (or your equivalent shell profile).
+Use the bootstrap uninstall scripts (same pattern as install — no admin/sudo required):
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/ezeprimo/mid/main/uninstall.ps1 | iex
+```
+
+```bash
+# Linux
+curl -fsSL https://raw.githubusercontent.com/ezeprimo/mid/main/uninstall.sh | bash
+```
+
+The uninstaller removes the `mid` binary, cleans up the installer PATH entry, and removes install directories if empty. Safe to run even if `mid` was partially installed or already removed.
 
 ## Core commands
 
