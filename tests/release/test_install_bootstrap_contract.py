@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import threading
@@ -13,6 +11,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+
+from helpers import _sha256, _require_tool, _require_bash_command, _to_bash_path, _run_bash_script
 
 from scripts.release.validate_release import resolve_release_tag
 
@@ -37,47 +37,6 @@ class LinuxHarness:
     repo: str
     latest_tag: str
     hashes_by_tag: dict[str, str]
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(64 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _require_tool(name: str) -> str:
-    resolved = shutil.which(name)
-    if resolved is None:
-        pytest.skip(f"{name} is required for installer runtime coverage")
-    return resolved
-
-
-def _require_bash_command(bash: str, command: str) -> None:
-    probe = subprocess.run([bash, "-lc", f"command -v {command} >/dev/null"], check=False)
-    if probe.returncode != 0:
-        pytest.skip(f"bash command '{command}' is required for installer runtime coverage")
-
-
-def _to_bash_path(path: Path) -> str:
-    raw = str(path)
-    if len(raw) >= 2 and raw[1] == ":":
-        suffix = raw[2:].replace("\\", "/")
-        return f"/mnt/{raw[0].lower()}{suffix}"
-    return raw.replace("\\", "/")
-
-
-def _run_bash_script(
-    bash: str, script: Path, env: dict[str, str], overrides: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
-    exports = "; ".join(f"export {key}={shlex.quote(value)}" for key, value in sorted(overrides.items()))
-    command = (
-        f"{exports}; exec bash {shlex.quote(_to_bash_path(script))}"
-        if exports
-        else f"exec bash {shlex.quote(_to_bash_path(script))}"
-    )
-    return subprocess.run([bash, "-lc", command], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False)
 
 
 def _write_linux_stub(path: Path, tag: str) -> None:
