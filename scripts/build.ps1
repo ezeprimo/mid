@@ -70,6 +70,7 @@ Write-Host "Building mid-windows-amd64.exe ..."
 # Hidden imports discovered empirically.
 $HIDDEN_IMPORTS = @(
     "--hidden-import", "markitdown"
+    "--hidden-import", "numpy._core._exceptions"
 )
 
 # Runtime data needed by MarkItDown dependencies.

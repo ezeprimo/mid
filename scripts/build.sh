@@ -76,6 +76,7 @@ echo "Building mid-linux-amd64 ..."
 "$PYTHON" -m PyInstaller --onefile --name mid-linux-amd64 --clean \
   --paths src \
   --hidden-import markitdown \
+  --hidden-import numpy._core._exceptions \
   --collect-data magika \
   --exclude-module torch \
   --exclude-module tensorflow \
