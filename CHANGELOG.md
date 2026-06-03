@@ -7,14 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Repository LICENSE file (Apache 2.0)
-- Publication metadata in pyproject.toml (authors, license)
-- GitHub Actions CI workflow for push and pull_request
-- CHANGELOG.md file
-
-## [0.1.0] — 2026-05-29
+## [0.1.0] — 2026-06-03
 
 ### Added
 
@@ -34,6 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bootstrap installers**: `install.ps1` (Windows) and `install.sh` (Linux) with version pin, checksum verification, PATH management, and pipx/pip fallback
 - **Release validation**: `scripts/release/validate_release.py` and associated contract tests
 - **Release notes rendering**: `scripts/release/render_release_notes.py`
+- **GitHub Actions CI**: Lint + test matrix across Python 3.10–3.12
+- **CONTRIBUTING.md**: Contribution guidelines
+- **License file**: Apache 2.0 `LICENSE`
+- **Publication metadata**: `pyproject.toml` with authors, classifiers, and project URLs
+- **Uninstall contract tests**: Python/pytest tests for `uninstall.sh` and `uninstall.ps1`
+
+### Fixed
+
+- **Critical bugs**: N+1 edge cases, batch `rglob` PermissionError guard, `relative_to` ValueError guard, PATH split against null in install.ps1 session PATH
+- **Installer hardening**: Cross-platform edge cases, version pin validation, integrity checks
+- **CI/CD hardening**: Workflow permissions, step isolation, error handling
+- **Build scripts**: Edge cases, cleanup, packaging flag guard for runtime compatibility
+- **10 coverage gaps**: Tests added for edge cases found in Judgment Day review
+- **Pre-release blockers**: Metadata alignment with PEP 639, ruff formatting
+
+### Changed
+
+- **mid-cli skill**: Restructured from developer/packaging focus to external agent usage instructions
+- **Project contact**: Set to `ezeprimo.ia@gmail.com` using GitHub noreply alias
+- **Repository prepared for public visibility**
 
 [Unreleased]: https://github.com/ezeprimo/mid/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ezeprimo/mid/releases/tag/v0.1.0
