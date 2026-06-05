@@ -73,12 +73,12 @@ class MarkitDownConverter(Converter):
 
         # --- check the header row ---------------------------------------------
         header_cells = [c.strip() for c in lines[header_idx].strip().strip("|").split("|")]
-        if not any("Unnamed:" in c or c == "NaN" for c in header_cells):
+        if not any("Unnamed:" in c or c.lower() in {"nan", "n/a"} for c in header_cells):
             return content  # nothing to clean
 
         # --- check first data row (all-unnamed guard) -------------------------
         first_data_cells = [c.strip() for c in lines[first_data_idx].strip().strip("|").split("|")]
-        if any("Unnamed:" in c or c == "NaN" for c in first_data_cells):
+        if any("Unnamed:" in c or c.lower() in {"nan", "n/a"} for c in first_data_cells):
             return content  # nothing to promote
 
         # --- promote first data row to header ---------------------------------

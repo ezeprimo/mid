@@ -288,28 +288,29 @@ class TestCleanup:
 class TestFfmpegWarningSuppression:
     """Verify that the ffmpeg/pydub RuntimeWarning is suppressed during convert()."""
 
-    def test_no_ffmpeg_warning_in_convert_stderr(self, tmp_path: Path) -> None:
-        """Running convert() on a .docx produces zero ffmpeg warnings on stderr."""
-        import io
-        import sys
+    def test_no_ffmpeg_warning_escapes_convert(self, tmp_path: Path) -> None:
+        """convert() suppresses the ffmpeg RuntimeWarning fired by pydub import.
+
+        Uses the real ``markitdown`` import (NOT mocked) and escalates
+        RuntimeWarning to an exception so any escaped warning fails the test.
+        """
+        import warnings
 
         src = tmp_path / "test.docx"
         src.write_text("fake", encoding="utf-8")
 
         converter = MarkitDownConverter()
-        stderr_capture = io.StringIO()
-        old_stderr = sys.stderr
-        sys.stderr = stderr_capture
 
-        with patch("markitdown.MarkItDown") as MockMD:
-            inst = MockMD.return_value
-            inst.convert.return_value.text_content = "# Works"
+        # Escalate RuntimeWarning to exception. If convert() fails to
+        # suppress the pydub/ffmpeg warning during import, it will
+        # propagate and fail the test.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            result = converter.convert(src)
 
-            converter.convert(src)
-
-        sys.stderr = old_stderr
-        stderr_output = stderr_capture.getvalue()
-        assert "ffmpeg" not in stderr_output.lower()
+        # We don't check success (fake .docx will likely fail real
+        # conversion), only that convert() returned without raising.
+        assert result is not None
 
 
 # ===========================================================================
