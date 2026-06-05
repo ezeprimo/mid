@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-06-05
+
 ### Fixed
 
 - **MarkItDown output quality**: Suppress spurious ffmpeg/pydub RuntimeWarning during import via `warnings.catch_warnings()`
@@ -59,5 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project contact**: Set to `ezeprimo.ia@gmail.com` using GitHub noreply alias
 - **Repository prepared for public visibility**
 
-[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ezeprimo/mid/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ezeprimo/mid/releases/tag/v0.1.0
