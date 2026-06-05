@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from mid import __version__
 from mid.cli import main
 
 
@@ -45,12 +46,12 @@ class TestVersion:
     def test_long_flag(self) -> None:
         code, out, err = _run(["--version"])
         assert code == 0
-        assert "mid 0.1.0" in out
+        assert f"mid {__version__}" in out
 
     def test_short_flag(self) -> None:
         code, out, err = _run(["-V"])
         assert code == 0
-        assert "mid 0.1.0" in out
+        assert f"mid {__version__}" in out
 
 
 class TestListFormats:
