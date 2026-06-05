@@ -159,7 +159,7 @@ class TestCleanUnnamedHeaders:
         converter = MarkitDownConverter()
         raw = "| NaN | NaN |\n| --- | --- |\n| H1 | H2 |\n| V1 | V2 |\n"
         result = converter._clean_unnamed_headers(raw)
-        lines = [l for l in result.split("\n") if l.strip()]
+        lines = [line for line in result.split("\n") if line.strip()]
         assert "NaN" not in lines[0]  # header line
         assert "H1" in lines[0]
 
@@ -168,7 +168,7 @@ class TestCleanUnnamedHeaders:
         converter = MarkitDownConverter()
         raw = "| U | Unnamed: 1 |\n| --- | --- |\n| Ok | Data |\n"
         result = converter._clean_unnamed_headers(raw)
-        lines = [l for l in result.split("\n") if l.strip()]
+        lines = [line for line in result.split("\n") if line.strip()]
         assert "Unnamed:" not in result
         assert "Ok" in lines[0]  # promoted header is first non-empty line
 
@@ -186,7 +186,7 @@ class TestCleanUnnamedHeaders:
         converter = MarkitDownConverter()
         raw = "| A | B | C | D | Unnamed: 5 |\n| --- | --- | --- | --- | --- |\n| W | X | Y | Z | Last |\n"
         result = converter._clean_unnamed_headers(raw)
-        sep_line = [l for l in result.split("\n") if "---" in l and l.strip().startswith("|")][0]
+        sep_line = [line for line in result.split("\n") if "---" in line and line.strip().startswith("|")][0]
         assert sep_line.count("---") == 5
 
 
@@ -259,14 +259,13 @@ class TestCleanup:
         converter = MarkitDownConverter()
         raw = "1. TOC Entry 3\n\n# Data\n| Bad | Unnamed: 1 |\n| --- | --- |\n| H1 | H2 |\n| V1 | V2 |\n"
         result = converter._cleanup(raw)
-        lines = [l for l in result.split("\n") if l.strip()]
+        lines = [line for line in result.split("\n") if line.strip()]
         # TOC stripped
         assert "TOC Entry 3" not in result
-        # Unnamed header cleaned
         assert "Unnamed:" not in result
         # Actual header promoted (should be right after # Data)
-        promo_idx = next(i for i, l in enumerate(lines) if "H1" in l)
-        data_idx = next(i for i, l in enumerate(lines) if "# Data" in l)
+        promo_idx = next(i for i, line in enumerate(lines) if "H1" in line)
+        data_idx = next(i for i, line in enumerate(lines) if "# Data" in line)
         assert promo_idx == data_idx + 1  # promoted header follows # Data
 
     def test_cleanup_empty_content(self) -> None:
