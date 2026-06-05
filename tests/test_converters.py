@@ -114,6 +114,91 @@ class TestMarkitDownConverter:
         assert result.success is False
         assert result.error is not None
 
+    def test_excel_merged_header_rows_are_promoted(self, tmp_path: Path) -> None:
+        """Excel output with placeholder headers promotes the next row as the table header."""
+        src = tmp_path / "merged.xlsx"
+        src.write_text("", encoding="utf-8")
+        markdown = (
+            "| Report Title | Unnamed: 1 | Unnamed: 2 |\n"
+            "| --- | --- | --- |\n"
+            "| Opción del menú contextual | Estado | Moneda |\n"
+            "| Opción 1 | Completado | ARS |\n"
+        )
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = markdown
+
+            converter = MarkitDownConverter()
+            result = converter.convert(src)
+
+        expected = "| Opción del menú contextual | Estado | Moneda |\n| --- | --- | --- |\n| Opción 1 | Completado | ARS |\n"
+        assert result.success is True
+        assert result.content == expected
+
+    def test_excel_unnamed_header_rows_are_promoted(self, tmp_path: Path) -> None:
+        """Excel output with mostly placeholder cells promotes the next row."""
+        src = tmp_path / "unnamed.xlsx"
+        src.write_text("", encoding="utf-8")
+        markdown = (
+            "| Unnamed: 0 | Unnamed: 1 | Unnamed: 2 |\n"
+            "| --- | --- | --- |\n"
+            "| Name | Status | Currency |\n"
+            "| Option 1 | Complete | ARS |\n"
+        )
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = markdown
+
+            converter = MarkitDownConverter()
+            result = converter.convert(src)
+
+        expected = "| Name | Status | Currency |\n| --- | --- | --- |\n| Option 1 | Complete | ARS |\n"
+        assert result.success is True
+        assert result.content == expected
+
+    def test_excel_placeholder_rows_are_not_promoted_twice(self, tmp_path: Path) -> None:
+        """Do not promote a second placeholder-like row as a table header."""
+        src = tmp_path / "placeholder.xlsx"
+        src.write_text("", encoding="utf-8")
+        markdown = (
+            "| Unnamed: 0 | Unnamed: 1 | Unnamed: 2 |\n"
+            "| --- | --- | --- |\n"
+            "| Report | Unnamed: 1 | Unnamed: 2 |\n"
+            "| Name | Status | Currency |\n"
+        )
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = markdown
+
+            converter = MarkitDownConverter()
+            result = converter.convert(src)
+
+        assert result.success is True
+        assert result.content == markdown
+
+    def test_non_excel_placeholder_like_markdown_is_unchanged(self, tmp_path: Path) -> None:
+        """Only Excel conversions receive the merged-header table cleanup."""
+        src = tmp_path / "table.docx"
+        src.write_text("", encoding="utf-8")
+        markdown = (
+            "| Report Title | Unnamed: 1 | Unnamed: 2 |\n"
+            "| --- | --- | --- |\n"
+            "| Opción del menú contextual | Estado | Moneda |\n"
+        )
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = markdown
+
+            converter = MarkitDownConverter()
+            result = converter.convert(src)
+
+        assert result.success is True
+        assert result.content == markdown
+
 
 # ===========================================================================
 # LegacyPlaceholder
