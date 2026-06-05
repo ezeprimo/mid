@@ -72,16 +72,12 @@ class MarkitDownConverter(Converter):
         first_data_idx = table_start + 2
 
         # --- check the header row ---------------------------------------------
-        header_cells = [
-            c.strip() for c in lines[header_idx].strip().strip("|").split("|")
-        ]
+        header_cells = [c.strip() for c in lines[header_idx].strip().strip("|").split("|")]
         if not any("Unnamed:" in c or c == "NaN" for c in header_cells):
             return content  # nothing to clean
 
         # --- check first data row (all-unnamed guard) -------------------------
-        first_data_cells = [
-            c.strip() for c in lines[first_data_idx].strip().strip("|").split("|")
-        ]
+        first_data_cells = [c.strip() for c in lines[first_data_idx].strip().strip("|").split("|")]
         if any("Unnamed:" in c or c == "NaN" for c in first_data_cells):
             return content  # nothing to promote
 
@@ -90,11 +86,11 @@ class MarkitDownConverter(Converter):
         num_cols = len(first_data_cells)
         sep_row = "|" + "---|" * num_cols
 
-        new_lines = lines[:table_start]                 # lines before the table
-        new_lines.append(lines[first_data_idx])         # promoted header
-        new_lines.append(sep_row)                       # generated separator
-        new_lines.extend(lines[first_data_idx + 1:table_end])  # remaining data
-        new_lines.extend(lines[table_end:])             # lines after the table
+        new_lines = lines[:table_start]  # lines before the table
+        new_lines.append(lines[first_data_idx])  # promoted header
+        new_lines.append(sep_row)  # generated separator
+        new_lines.extend(lines[first_data_idx + 1 : table_end])  # remaining data
+        new_lines.extend(lines[table_end:])  # lines after the table
 
         return "\n".join(new_lines)
 
