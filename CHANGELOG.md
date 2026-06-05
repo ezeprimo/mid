@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MarkItDown output quality**: Suppress spurious ffmpeg/pydub RuntimeWarning during import via `warnings.catch_warnings()`
+- **Excel merged cell headers**: Detect `Unnamed:` / `NaN` patterns in table header rows and promote the first data row as the new header with a generated separator
+- **TOC literal text**: Strip numbered TOC entries (e.g. "1. Introduction 3") that leak as plain text before the first heading
+- **Regression guard**: Added 18 unit tests for post-processing methods (`_clean_unnamed_headers`, `_strip_toc_text`, `_cleanup`, ffmpeg suppression)
+
+### Added
+
+- **Converter test suite**: 18 new tests across 4 test classes covering the new post-processing pipeline
+
 ## [0.1.0] — 2026-06-03
 
 ### Added
