@@ -38,7 +38,7 @@ function Write-NextSteps([string]$ResolvedTag, [string]$Repository, [string]$Raw
     if ($Reason) { Write-Warning "Binary install stopped: $Reason"; Write-Host ""; Write-Host "Fallback with the same version target ($ResolvedTag):"; Write-Host "  pipx install --force 'mid==$PackageVersion'"; Write-Host "  python -m pip install --user 'mid==$PackageVersion'"; Write-Host "" }
     Write-Host "Update to latest stable:"; Write-Host "  Remove-Item Env:MID_VERSION -ErrorAction SilentlyContinue"; Write-Host "  irm $InstallScriptUrl | iex"; Write-Host ""
     Write-Host "Rollback to a pinned version:"; Write-Host "  `$env:MID_VERSION = 'vX.Y.Z'"; Write-Host "  irm $InstallScriptUrl | iex"; Write-Host ""
-    Write-Host "Phase-1 uninstall:"; Write-Host "  Remove-Item -LiteralPath '$TargetPath' -Force -ErrorAction SilentlyContinue"; Write-Host "  Remove user PATH entry '$InstallDir' if you no longer need it"
+    Write-Host "Uninstall with dedicated script (recommended):"; Write-Host "  irm $RawBaseUrl/$Repository/main/uninstall.ps1 | iex"; Write-Host ""; Write-Host "Phase-1 uninstall (manual fallback):"; Write-Host "  Remove-Item -LiteralPath '$TargetPath' -Force -ErrorAction SilentlyContinue"; Write-Host "  Remove user PATH entry '$InstallDir' if you no longer need it"
 }
 function Install-Atomically([string]$DownloadedPath, [string]$FinalPath) {
     $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $FinalPath)
