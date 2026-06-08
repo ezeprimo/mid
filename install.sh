@@ -103,7 +103,10 @@ show_fallback_guidance() {
   echo "Rollback to a pinned version:"
   echo "  MID_VERSION=vX.Y.Z curl -fsSL $install_script_url | bash"
   echo
-  echo "Phase-1 uninstall:"
+  echo "Uninstall with dedicated script (recommended):"
+  echo "  curl -fsSL $RAW_BASE/$REPO/main/uninstall.sh | bash"
+  echo
+  echo "Phase-1 uninstall (manual fallback):"
   echo "  rm -f '$TARGET_PATH'"
   echo "  Remove '$INSTALL_DIR' from PATH and delete installer stanza in $PROFILE_FILE if present"
 }
@@ -241,6 +244,9 @@ echo
 echo "Rollback to a pinned version:"
 echo "  MID_VERSION=vX.Y.Z curl -fsSL $INSTALL_SCRIPT_URL | bash"
 echo
-echo "Phase-1 uninstall:"
+echo "Uninstall with dedicated script (recommended):"
+echo "  curl -fsSL $RAW_BASE/$REPO/main/uninstall.sh | bash"
+echo
+echo "Phase-1 uninstall (manual fallback):"
 echo "  rm -f '$TARGET_PATH'"
 echo "  Remove '$INSTALL_DIR' from PATH and delete installer stanza in $PROFILE_FILE if present"
