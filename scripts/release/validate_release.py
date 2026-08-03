@@ -197,10 +197,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if errors:
         for error in errors:
-            print(f"ERROR: {error}")
+            print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    print(f"OK: release {actual_tag} passed contract validation")
+    print(f"OK: release {actual_tag} passed contract validation", file=sys.stderr)
     return 0
 
 
