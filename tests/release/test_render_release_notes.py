@@ -68,9 +68,7 @@ class TestRenderReleaseNotesMain:
     def test_version_without_v_prefix_is_normalized(self, tmp_path) -> None:
         notes = tmp_path / "notes.md"
 
-        exit_code = main(
-            ["--version", "1.2.3", "--repo", "owner/name", "--output", str(notes)]
-        )
+        exit_code = main(["--version", "1.2.3", "--repo", "owner/name", "--output", str(notes)])
 
         assert exit_code == 0
         assert "# mid v1.2.3" in notes.read_text(encoding="utf-8")

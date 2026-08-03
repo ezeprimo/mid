@@ -124,9 +124,7 @@ def _make_valid_release(tag: str = "v1.2.3") -> dict:
 
 
 class TestValidateReleaseMain:
-    def test_valid_release_exits_0(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_valid_release_exits_0(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         release = _make_valid_release("v1.2.3")
         path = tmp_path / "release.json"
         path.write_text(json.dumps(release), encoding="utf-8")
@@ -136,9 +134,7 @@ class TestValidateReleaseMain:
         assert rc == 0
         assert "OK: release v1.2.3 passed contract validation" in capsys.readouterr().err
 
-    def test_release_json_is_array_exits_2(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_release_json_is_array_exits_2(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         path = tmp_path / "array.json"
         path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
 
@@ -153,9 +149,7 @@ class TestValidateReleaseMain:
 
         assert excinfo.value.code == 2
 
-    def test_requested_tag_not_resolved_exits_1(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_requested_tag_not_resolved_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         release = _make_valid_release("v1.2.3")
         path = tmp_path / "release.json"
         path.write_text(json.dumps(release), encoding="utf-8")
@@ -165,9 +159,7 @@ class TestValidateReleaseMain:
         assert rc == 1
         assert "ERROR:" in capsys.readouterr().err
 
-    def test_releases_json_not_array_exits_2(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_releases_json_not_array_exits_2(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         release = _make_valid_release("v1.2.3")
         valid = tmp_path / "release.json"
         valid.write_text(json.dumps(release), encoding="utf-8")
@@ -179,13 +171,9 @@ class TestValidateReleaseMain:
         assert rc == 2
         assert "--releases-json must contain a JSON array" in capsys.readouterr().err
 
-    def test_invalid_contract_exits_1(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_invalid_contract_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         release = _make_valid_release("v1.2.3")
-        release["assets"] = [
-            asset for asset in release["assets"] if asset["name"] != "mid-linux-amd64"
-        ]
+        release["assets"] = [asset for asset in release["assets"] if asset["name"] != "mid-linux-amd64"]
         path = tmp_path / "release.json"
         path.write_text(json.dumps(release), encoding="utf-8")
 
