@@ -1,0 +1,250 @@
+# Non-goal: macOS runners (macos-15 ARM + macos-15-intel) deferred until mid publishes macOS binaries.
+name: install-smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/mid/**"
+      - "install.sh"
+      - "install.ps1"
+      - "scripts/build.sh"
+      - "scripts/build.ps1"
+      - "pyproject.toml"
+      - ".github/workflows/install-smoke.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/mid/**"
+      - "install.sh"
+      - "install.ps1"
+      - "scripts/build.sh"
+      - "scripts/build.ps1"
+      - "pyproject.toml"
+      - ".github/workflows/install-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke-${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+            artifact_name: mid-linux-amd64
+          - os: windows-latest
+            target: windows-amd64
+            artifact_name: mid-windows-amd64.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.os == 'Windows' && '~\AppData\Local\pip\Cache' || '~/.cache/pip' }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip 'pyinstaller==6.11.0' 'markitdown[all]'
+
+      # Smoke builds use inline PyInstaller to avoid version validation failure
+      # (scripts/build.sh and scripts/build.ps1 require --version to match
+      # package __version__ == 0.1.1; passing v0.0.0 would exit 1). Flags mirror
+      # release.yml / scripts/build.* / docker/Dockerfile builder stage.
+      - name: Build Linux binary
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python -m PyInstaller --onefile --name mid-linux-amd64 --clean \
+            --paths src \
+            --hidden-import markitdown \
+            --hidden-import numpy._core._exceptions \
+            --collect-data magika \
+            --exclude-module torch \
+            --exclude-module tensorflow \
+            --exclude-module transformers \
+            --exclude-module scipy \
+            --exclude-module matplotlib \
+            --exclude-module IPython \
+            --exclude-module jedi \
+            --exclude-module zmq \
+            --exclude-module pytest \
+            --distpath dist \
+            --workpath build \
+            --specpath . \
+            src/mid/__main__.py
+          chmod +x dist/mid-linux-amd64
+
+      - name: Build Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m PyInstaller --onefile --name mid-windows-amd64 --clean `
+            --paths src `
+            --hidden-import markitdown `
+            --hidden-import numpy._core._exceptions `
+            --collect-data magika `
+            --exclude-module torch `
+            --exclude-module tensorflow `
+            --exclude-module transformers `
+            --exclude-module scipy `
+            --exclude-module matplotlib `
+            --exclude-module IPython `
+            --exclude-module jedi `
+            --exclude-module zmq `
+            --exclude-module pytest `
+            --distpath dist `
+            --workpath build `
+            --specpath . `
+            src/mid/__main__.py
+
+      - name: Simulate install (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cp dist/mid-linux-amd64 "$HOME/.local/bin/mid"
+          chmod +x "$HOME/.local/bin/mid"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Simulate install (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA "mid\bin"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Copy-Item dist\mid-windows-amd64.exe "$installDir\mid.exe" -Force
+          echo "$installDir" | Out-File -Append -FilePath $env:GITHUB_PATH
+
+      - name: Smoke mid --version (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mid --version | grep -q mid
+
+      - name: Smoke mid --version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $versionOut = mid --version
+          if ($versionOut -notmatch "mid") {
+            throw "version output did not include expected marker: $versionOut"
+          }
+
+      - name: Smoke help and list-formats (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mid --help
+          mid convert --help
+          mid batch --help
+          mid --list-formats
+
+      - name: Smoke help and list-formats (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          mid --help
+          mid convert --help
+          mid batch --help
+          mid --list-formats
+
+      - name: Generate smoke .docx (cross-platform)
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          run_temp = Path(os.environ["RUNNER_TEMP"])
+          out = run_temp / "workflow-smoke.docx"
+
+          content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+            <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+            <Default Extension="xml" ContentType="application/xml"/>
+            <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+          </Types>
+          """
+          rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+          </Relationships>
+          """
+          document = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:body><w:p><w:r><w:t>workflow smoke conversion</w:t></w:r></w:p></w:body>
+          </w:document>
+          """
+
+          with ZipFile(out, mode="w", compression=ZIP_DEFLATED) as zf:
+            zf.writestr("[Content_Types].xml", content_types)
+            zf.writestr("_rels/.rels", rels)
+            zf.writestr("word/document.xml", document)
+
+      - name: Smoke conversion (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          DOCX="$RUNNER_TEMP/workflow-smoke.docx"
+          MD="$RUNNER_TEMP/workflow-smoke.md"
+          mid convert "$DOCX" -o "$MD"
+          test -f "$MD"
+          grep -q "workflow smoke conversion" "$MD"
+
+      - name: Smoke conversion (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $docx = Join-Path $env:RUNNER_TEMP "workflow-smoke.docx"
+          $md = Join-Path $env:RUNNER_TEMP "workflow-smoke.md"
+          mid convert $docx -o $md
+          if (-not (Test-Path $md)) {
+            throw "Expected smoke markdown output file"
+          }
+          $text = Get-Content -Raw $md
+          if ($text -notmatch "workflow smoke conversion") {
+            throw "Converted markdown missing expected content"
+          }
+
+      - name: Re-run idempotency check (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cp dist/mid-linux-amd64 "$HOME/.local/bin/mid"
+          chmod +x "$HOME/.local/bin/mid"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mid --version | grep -q mid
+          test -x "$HOME/.local/bin/mid"
+
+      - name: Re-run idempotency check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA "mid\bin"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Copy-Item dist\mid-windows-amd64.exe "$installDir\mid.exe" -Force
+          echo "$installDir" | Out-File -Append -FilePath $env:GITHUB_PATH
+          $versionOut = mid --version
+          if ($versionOut -notmatch "mid") {
+            throw "idempotent re-install broke mid --version: $versionOut"
+          }
+          if (-not (Test-Path "$installDir\mid.exe")) {
+            throw "Expected binary still present after idempotent install"
+          }
