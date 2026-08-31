@@ -158,7 +158,100 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     fi
   fi
 
-  # ---- 2. Remove install directories (bottom-up) -----------------------------
+  # ---- 2. Update checker cache ------------------------------------------------
+
+  info ""
+  info ">> Update checker cache"
+
+  cache_candidates=(
+    "${XDG_CACHE_HOME:-$HOME/.cache}/mid/update_cache.json"
+    "$HOME/.cache/mid/update_cache.json"
+    "$HOME/Library/Caches/mid/update_cache.json"
+    "${XDG_CONFIG_HOME:-$HOME/.config}/mid/.update_cache.json"
+    "$HOME/.config/mid/.update_cache.json"
+    "$HOME/.config/mid/update_cache.json"
+  )
+
+  seen_cache=()
+  removed_parents=()
+
+  for candidate in "${cache_candidates[@]}"; do
+    # dedupe: skip if already seen
+    dup=0
+    for s in "${seen_cache[@]}"; do
+      if [[ "$s" == "$candidate" ]]; then dup=1; break; fi
+    done
+    [[ $dup -eq 1 ]] && continue
+    seen_cache+=("$candidate")
+
+    if [[ -f "$candidate" ]]; then
+      if [[ "$DRY_RUN" -eq 1 ]]; then
+        dry "remove '$candidate' (update checker cache)"
+        removed_parents+=("$(dirname "$candidate")")
+      else
+        rm -f "$candidate" 2>/dev/null || true
+        if [[ ! -f "$candidate" ]]; then
+          ok "'$candidate' (update checker cache)"
+          removed_parents+=("$(dirname "$candidate")")
+        else
+          warn "Could not delete '$candidate' (update checker cache) — permission denied."
+        fi
+      fi
+    fi
+  done
+
+  # Try to remove empty parent directories bottom-up (best-effort, silent if non-empty)
+  if [[ ${#removed_parents[@]} -gt 0 ]]; then
+    seen_parents=()
+    for parent in "${removed_parents[@]}"; do
+      dup=0
+      for s in "${seen_parents[@]}"; do
+        if [[ "$s" == "$parent" ]]; then dup=1; break; fi
+      done
+      [[ $dup -eq 1 ]] && continue
+      seen_parents+=("$parent")
+
+      if [[ ! -d "$parent" ]]; then
+        continue
+      fi
+
+      if [[ "$DRY_RUN" -eq 1 ]]; then
+        entry_count=0
+        for entry in "$parent"/* "$parent"/.*; do
+          base="$(basename "$entry")"
+          [[ "$base" == "." || "$base" == ".." ]] && continue
+          if [[ -e "$entry" || -L "$entry" ]]; then entry_count=$((entry_count + 1)); fi
+        done
+        # Count how many cache candidates in this parent would be removed (file exists)
+        to_remove=0
+        for cand in "${seen_cache[@]}"; do
+          if [[ "$(dirname "$cand")" == "$parent" && -f "$cand" ]]; then
+            to_remove=$((to_remove + 1))
+          fi
+        done
+        remaining=$((entry_count - to_remove))
+        if [[ $remaining -eq 0 ]]; then
+          dry "remove empty directory '$parent' (update cache parent)"
+        fi
+      else
+        entry_count=0
+        for entry in "$parent"/* "$parent"/.*; do
+          base="$(basename "$entry")"
+          [[ "$base" == "." || "$base" == ".." ]] && continue
+          if [[ -e "$entry" || -L "$entry" ]]; then entry_count=$((entry_count + 1)); fi
+        done
+        if [[ $entry_count -eq 0 ]]; then
+          if rmdir "$parent" 2>/dev/null; then
+            ok "empty directory '$parent' (update cache parent)"
+          else
+            skip "$parent" "could not be removed"
+          fi
+        fi
+      fi
+    done
+  fi
+
+  # ---- 3. Remove install directories (bottom-up) -----------------------------
 
   info ""
   info ">> Install directories"
@@ -208,7 +301,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     fi
   done
 
-  # ---- 3. Remove PATH stanza from profile ------------------------------------
+  # ---- 4. Remove PATH stanza from profile ------------------------------------
 
   info ""
   info ">> PATH configuration"
@@ -238,7 +331,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     fi
   fi
 
-  # ---- 4. Clean current session PATH ------------------------------------------
+  # ---- 5. Clean current session PATH ------------------------------------------
   # The installer added $INSTALL_DIR to the current session; we remove it here.
 
   info ""
@@ -264,7 +357,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     fi
   fi
 
-  # ---- 5. Check for other profiles (bashrc, zshrc, etc.) ---------------------
+  # ---- 6. Check for other profiles (bashrc, zshrc, etc.) ---------------------
   # The installer only writes to $PROFILE_FILE, but users may have sourced it.
 
   info ""
@@ -282,7 +375,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     fi
   done
 
-  # ---- 6. Summary ------------------------------------------------------------
+  # ---- 7. Summary ------------------------------------------------------------
 
   info ""
   info ">> Done"
