@@ -307,32 +307,43 @@ def handler_help(args: argparse.Namespace, parser: argparse.ArgumentParser) -> N
 def main() -> None:
     """CLI entry point (console_scripts / ``python -m mid``)."""
     parser = setup_parser()
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
 
-    # --list-formats is a top-level flag (no subcommand needed)
-    if args.list_formats:
-        from mid.converters.legacy import LegacyPlaceholder
+        # --list-formats is a top-level flag (no subcommand needed)
+        if args.list_formats:
+            from mid.converters.legacy import LegacyPlaceholder
 
-        supported = []
-        legacy = []
-        for ext, cls in sorted(REGISTRY.items()):
-            if cls is LegacyPlaceholder:
-                legacy.append(ext)
-            else:
-                supported.append(ext)
-        print(f"Supported: {' '.join(supported)}")
-        print(f"Legacy (migrate first): {' '.join(legacy)}")
-        return
+            supported = []
+            legacy = []
+            for ext, cls in sorted(REGISTRY.items()):
+                if cls is LegacyPlaceholder:
+                    legacy.append(ext)
+                else:
+                    supported.append(ext)
+            print(f"Supported: {' '.join(supported)}")
+            print(f"Legacy (migrate first): {' '.join(legacy)}")
+            return
 
-    # No subcommand → show help
-    if args.command is None:
-        parser.print_help()
-        return
+        # No subcommand → show help
+        if args.command is None:
+            parser.print_help()
+            return
 
-    # Dispatch
-    if args.command == "help":
-        handler_help(args, parser)
-    elif args.command == "convert":
-        handler_convert(args)
-    elif args.command == "batch":
-        handler_batch(args)
+        # Dispatch
+        if args.command == "help":
+            handler_help(args, parser)
+        elif args.command == "convert":
+            handler_convert(args)
+        elif args.command == "batch":
+            handler_batch(args)
+    finally:
+        # Update checker: never alters exit codes, never writes to stdout, never raises
+        try:
+            from mid.update_checker import check_and_notify  # lazy import
+
+            check_and_notify()
+        except SystemExit:
+            raise
+        except BaseException:
+            pass
