@@ -126,7 +126,90 @@ if ($DryRun) {
     }
 }
 
-# ---- 2. Remove install directories (bottom-up) ------------------------------
+# ---- 2. Update checker cache ------------------------------------------------
+
+Write-Step "Update checker cache"
+
+$cacheCandidates = @()
+if ($env:LOCALAPPDATA) { $cacheCandidates += (Join-Path $env:LOCALAPPDATA "mid\update_cache.json") }
+if ($env:XDG_CACHE_HOME) { $cacheCandidates += (Join-Path $env:XDG_CACHE_HOME "mid\update_cache.json") }
+$cacheCandidates += (Join-Path $HOME ".cache\mid\update_cache.json")
+$cacheCandidates += (Join-Path $HOME "Library\Caches\mid\update_cache.json")
+if ($env:XDG_CONFIG_HOME) {
+    $cacheCandidates += (Join-Path $env:XDG_CONFIG_HOME "mid\.update_cache.json")
+    $cacheCandidates += (Join-Path $env:XDG_CONFIG_HOME "mid\update_cache.json")
+}
+$cacheCandidates += (Join-Path $HOME ".config\mid\.update_cache.json")
+$cacheCandidates += (Join-Path $HOME ".config\mid\update_cache.json")
+
+# Dedupe candidates
+$seenCache = @{}
+$uniqueCandidates = @()
+foreach ($c in $cacheCandidates) {
+    if (-not $c) { continue }
+    if (-not $seenCache.ContainsKey($c)) {
+        $seenCache[$c] = $true
+        $uniqueCandidates += $c
+    }
+}
+
+$removedParents = @()
+foreach ($candidate in $uniqueCandidates) {
+    if (Test-Path -LiteralPath $candidate) {
+        if ($DryRun) {
+            Write-DryRun "remove '$candidate' (update checker cache)"
+            $removedParents += (Split-Path -Parent $candidate)
+        } else {
+            try { Remove-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue } catch {}
+            if (-not (Test-Path -LiteralPath $candidate)) {
+                Write-Removed "'$candidate' (update checker cache)"
+                $removedParents += (Split-Path -Parent $candidate)
+            } else {
+                Write-Warning "Could not delete '$candidate' (update checker cache)."
+                $script:FoundIssues = $true
+            }
+        }
+    }
+}
+
+# Try to remove empty parent directories bottom-up (best-effort)
+if ($removedParents.Count -gt 0) {
+    $seenParents = @{}
+    $uniqueParents = @()
+    foreach ($p in $removedParents) {
+        if (-not $p) { continue }
+        if (-not $seenParents.ContainsKey($p)) {
+            $seenParents[$p] = $true
+            $uniqueParents += $p
+        }
+    }
+    foreach ($parent in $uniqueParents) {
+        if (-not (Test-Path -LiteralPath $parent)) { continue }
+        try {
+            $children = @(Get-ChildItem -LiteralPath $parent -Force -ErrorAction SilentlyContinue)
+            if ($DryRun) {
+                $toRemove = @($uniqueCandidates | Where-Object { (Split-Path -Parent $_) -eq $parent -and (Test-Path -LiteralPath $_) }).Count
+                $remaining = $children.Count - $toRemove
+                if ($remaining -eq 0) {
+                    Write-DryRun "remove empty directory '$parent' (update cache parent)"
+                }
+            } else {
+                if ($children.Count -eq 0) {
+                    Remove-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
+                    if (-not (Test-Path -LiteralPath $parent)) {
+                        Write-Removed "empty directory '$parent' (update cache parent)"
+                    } else {
+                        Write-Skipped $parent "could not be removed"
+                    }
+                }
+            }
+        } catch {
+            # silent on error
+        }
+    }
+}
+
+# ---- 3. Remove install directories (bottom-up) ------------------------------
 
 Write-Step "Install directories"
 
@@ -162,7 +245,7 @@ foreach ($dir in @($InstallDir, $InstallParentDir)) {
     }
 }
 
-# ---- 3. Clean User PATH entry -----------------------------------------------
+# ---- 4. Clean User PATH entry -----------------------------------------------
 
 Write-Step "User PATH"
 
@@ -227,7 +310,7 @@ if ($DryRun) {
     }
 }
 
-# ---- 4. Summary -------------------------------------------------------------
+# ---- 5. Summary -------------------------------------------------------------
 
 Write-Step "Done"
 
