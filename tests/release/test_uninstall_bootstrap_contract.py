@@ -74,6 +74,49 @@ def _create_linux_state(
     }
 
 
+def _create_cache_files(
+    home: Path, xdg_cache: Path | None = None, xdg_config: Path | None = None
+) -> list[Path]:
+    """Create update-checker cache files mirroring uninstall.sh candidates.
+
+    Mirrors ``uninstall.sh`` logic exactly::
+
+        "${XDG_CACHE_HOME:-$HOME/.cache}/mid/update_cache.json"
+        "$HOME/.cache/mid/update_cache.json"
+        "$HOME/Library/Caches/mid/update_cache.json"
+        "${XDG_CONFIG_HOME:-$HOME/.config}/mid/.update_cache.json"
+        "$HOME/.config/mid/.update_cache.json"
+        "$HOME/.config/mid/update_cache.json"
+
+    Deduplicates like the script and returns the list of distinct Paths created.
+    Each file contains minimal valid JSON (latest_version + checked_at).
+    """
+
+    candidates: list[Path] = []
+    effective_cache = xdg_cache if xdg_cache is not None else home / ".cache"
+    candidates.append(effective_cache / "mid" / "update_cache.json")
+    candidates.append(home / ".cache" / "mid" / "update_cache.json")
+    candidates.append(home / "Library" / "Caches" / "mid" / "update_cache.json")
+    effective_config = xdg_config if xdg_config is not None else home / ".config"
+    candidates.append(effective_config / "mid" / ".update_cache.json")
+    candidates.append(home / ".config" / "mid" / ".update_cache.json")
+    candidates.append(home / ".config" / "mid" / "update_cache.json")
+
+    seen: set[Path] = set()
+    created: list[Path] = []
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        cand.parent.mkdir(parents=True, exist_ok=True)
+        cand.write_text(
+            '{"latest_version": "9.9.9", "checked_at": "2026-01-01T00:00:00Z"}',
+            encoding="utf-8",
+        )
+        created.append(cand)
+    return created
+
+
 # =============================================================================
 # Linux (bash) tests
 # =============================================================================
@@ -418,6 +461,364 @@ def test_windows_custom_path(tmp_path: Path) -> None:
 
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert not binary.exists()
+
+
+# =============================================================================
+# Linux — update checker cache cleanup
+# =============================================================================
+
+
+def test_linux_update_cache_dry_run(tmp_path: Path) -> None:
+    """Dry-run must report cache cleanup without deleting files."""
+    bash = _require_tool("bash")
+    state = _create_linux_state(tmp_path)
+    home = state["home"]  # type: ignore[assignment]
+    cache_files = _create_cache_files(home)  # type: ignore[arg-type]
+    assert len(cache_files) >= 2, "helper should create at least 2 distinct cache files"
+    for p in cache_files:
+        assert p.exists(), f"cache file not created: {p}"
+
+    hashes_before = {p: _sha256(p) for p in cache_files}
+    binary_before = _sha256(state["binary_path"])  # type: ignore[arg-type]
+    profile_before = _sha256(state["profile"])  # type: ignore[arg-type]
+
+    env = os.environ.copy()
+    overrides = {"HOME": _to_bash_path(home)}  # type: ignore[arg-type]
+
+    result = _run_bash_script(bash, REPO_ROOT / "uninstall.sh", env, overrides, args=["--dry-run"])
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+    stdout_lower = result.stdout.lower()
+    assert "update checker cache" in stdout_lower, f"missing 'update checker cache' in: {result.stdout}"
+    assert "dry-run" in stdout_lower, f"missing 'dry-run' in: {result.stdout}"
+    assert "update_cache.json" in result.stdout, f"missing 'update_cache.json' in: {result.stdout}"
+
+    # each candidate file still exists and is unchanged
+    for p in cache_files:
+        assert p.exists(), f"dry-run should not delete {p}"
+        assert _sha256(p) == hashes_before[p], f"dry-run modified {p}"
+
+    # binary and profile unchanged (reuse existing pattern)
+    assert state["binary_path"].exists()  # type: ignore[union-attr]
+    assert _sha256(state["binary_path"]) == binary_before  # type: ignore[arg-type]
+    assert _sha256(state["profile"]) == profile_before  # type: ignore[arg-type]
+
+    # dry output mentions each existing candidate (at least 2 expected)
+    dry_cache_lines = [ln for ln in result.stdout.splitlines() if "dry-run" in ln.lower() and "update_cache.json" in ln]
+    assert len(dry_cache_lines) >= 2, (
+        f"expected at least 2 dry-run cache lines, got {len(dry_cache_lines)}: {dry_cache_lines}\nstdout:\n{result.stdout}"
+    )
+
+
+def test_linux_update_cache_removed_on_force(tmp_path: Path) -> None:
+    """--force must delete cache files and remove empty parents."""
+    bash = _require_tool("bash")
+    state = _create_linux_state(tmp_path)
+    home = state["home"]  # type: ignore[assignment]
+    cache_files = _create_cache_files(home)  # type: ignore[arg-type]
+    assert len(cache_files) >= 2
+    for p in cache_files:
+        assert p.exists()
+
+    env = os.environ.copy()
+    overrides = {"HOME": _to_bash_path(home)}  # type: ignore[arg-type]
+
+    result = _run_bash_script(bash, REPO_ROOT / "uninstall.sh", env, overrides, args=["--force"])
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+    stdout_lower = result.stdout.lower()
+    assert "removed" in stdout_lower, f"missing 'removed' in: {result.stdout}"
+    assert "update checker cache" in stdout_lower
+    assert "update_cache.json" in result.stdout
+
+    for p in cache_files:
+        assert not p.exists(), f"expected {p} to be deleted"
+
+    # empty parent dirs removed (script does rmdir bottom-up, best-effort)
+    assert not (home / ".cache" / "mid").exists(), "expected .cache/mid to be removed when empty"
+    assert not (home / ".config" / "mid").exists(), "expected .config/mid to be removed when empty"
+    assert not (home / "Library" / "Caches" / "mid").exists(), "expected Library/Caches/mid to be removed when empty"
+
+
+def test_linux_update_cache_non_empty_parent_kept(tmp_path: Path) -> None:
+    """Parent dir with extra file must be kept after cache cleanup."""
+    bash = _require_tool("bash")
+    state = _create_linux_state(tmp_path)
+    home = state["home"]  # type: ignore[assignment]
+    cache_files = _create_cache_files(home)  # type: ignore[arg-type]
+
+    keep = home / ".config" / "mid" / "keep.txt"  # type: ignore[union-attr]
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    keep.write_text("keep me", encoding="utf-8")
+
+    for p in cache_files:
+        assert p.exists()
+    assert keep.exists()
+
+    env = os.environ.copy()
+    overrides = {"HOME": _to_bash_path(home)}  # type: ignore[arg-type]
+
+    result = _run_bash_script(bash, REPO_ROOT / "uninstall.sh", env, overrides, args=["--force"])
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+    for p in cache_files:
+        assert not p.exists(), f"cache file {p} should be deleted"
+
+    assert keep.exists(), "keep.txt should not be deleted"
+    assert (home / ".config" / "mid").exists(), "parent should be kept when non-empty"
+    # other empty parents still removed
+    assert not (home / ".cache" / "mid").exists()  # type: ignore[union-attr]
+    assert not (home / "Library" / "Caches" / "mid").exists()  # type: ignore[union-attr]
+
+
+def test_linux_update_cache_xdg_overrides(tmp_path: Path) -> None:
+    """XDG_CACHE_HOME / XDG_CONFIG_HOME overrides must be respected."""
+    bash = _require_tool("bash")
+    state = _create_linux_state(tmp_path)
+    home = state["home"]  # type: ignore[assignment]
+
+    xdg_cache = tmp_path / "custom_cache"
+    xdg_config = tmp_path / "custom_config"
+
+    cache_files = _create_cache_files(home, xdg_cache=xdg_cache, xdg_config=xdg_config)  # type: ignore[arg-type]
+
+    custom_cache_file = xdg_cache / "mid" / "update_cache.json"
+    custom_config_file = xdg_config / "mid" / ".update_cache.json"
+    assert custom_cache_file.exists(), f"custom cache file not created: {custom_cache_file}"
+    assert custom_config_file.exists(), f"custom config file not created: {custom_config_file}"
+
+    env = os.environ.copy()
+    overrides = {
+        "HOME": _to_bash_path(home),  # type: ignore[arg-type]
+        "XDG_CACHE_HOME": _to_bash_path(xdg_cache),
+        "XDG_CONFIG_HOME": _to_bash_path(xdg_config),
+    }
+
+    result = _run_bash_script(bash, REPO_ROOT / "uninstall.sh", env, overrides, args=["--force"])
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+    stdout_lower = result.stdout.lower()
+    assert "removed" in stdout_lower
+    assert "update checker cache" in stdout_lower
+
+    assert not custom_cache_file.exists(), "custom XDG cache file should be deleted"
+    assert not custom_config_file.exists(), "custom XDG config file should be deleted"
+    # parents of custom locations should be removed if empty (best-effort)
+    assert not (xdg_cache / "mid").exists(), "custom cache parent should be removed when empty"
+    assert not (xdg_config / "mid").exists(), "custom config parent should be removed when empty"
+
+    # all cache files (including home fallbacks) must be gone
+    for p in cache_files:
+        assert not p.exists(), f"expected {p} to be deleted"
+
+
+# =============================================================================
+# Windows — update checker cache cleanup (PowerShell)
+# =============================================================================
+
+
+def test_windows_update_cache_dry_run(tmp_path: Path) -> None:
+    """Windows dry-run must report cache cleanup without deleting files."""
+    pwsh = _require_tool("pwsh")
+    local_app_data = tmp_path / "local-app-data"
+    home = tmp_path / "home"
+    install_dir = local_app_data / "mid" / "bin"
+    install_dir.mkdir(parents=True)
+    binary = install_dir / "mid.exe"
+    binary.write_text("fake mid binary", encoding="utf-8")
+    binary_before = _sha256(binary)
+
+    candidates: list[Path] = []
+    p1 = local_app_data / "mid" / "update_cache.json"
+    p1.parent.mkdir(parents=True, exist_ok=True)
+    p1.write_text('{"latest_version": "9.9.9"}', encoding="utf-8")
+    candidates.append(p1)
+    p2 = home / ".cache" / "mid" / "update_cache.json"
+    p2.parent.mkdir(parents=True, exist_ok=True)
+    p2.write_text("{}", encoding="utf-8")
+    candidates.append(p2)
+    p3 = home / ".config" / "mid" / ".update_cache.json"
+    p3.parent.mkdir(parents=True, exist_ok=True)
+    p3.write_text("{}", encoding="utf-8")
+    candidates.append(p3)
+    p4 = home / ".config" / "mid" / "update_cache.json"
+    p4.write_text("{}", encoding="utf-8")
+    candidates.append(p4)
+    p5 = home / "Library" / "Caches" / "mid" / "update_cache.json"
+    p5.parent.mkdir(parents=True, exist_ok=True)
+    p5.write_text("{}", encoding="utf-8")
+    candidates.append(p5)
+
+    hashes_before = {p: _sha256(p) for p in candidates}
+    for p in candidates:
+        assert p.exists()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "MID_DISABLE_PERSIST_PATH_UPDATE": "1",
+            "LOCALAPPDATA": str(local_app_data),
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+        }
+    )
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(REPO_ROOT / "uninstall.ps1"), "-DryRun", "-Force"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert binary.exists()
+    assert _sha256(binary) == binary_before
+    for p in candidates:
+        assert p.exists(), f"dry-run should not delete {p}"
+        assert _sha256(p) == hashes_before[p]
+
+    stdout_lower = result.stdout.lower()
+    assert "dry-run" in stdout_lower
+    assert "update checker cache" in stdout_lower
+    assert "update_cache.json" in result.stdout
+    dry_lines = [ln for ln in result.stdout.splitlines() if "dry-run" in ln.lower() and "update_cache.json" in ln]
+    assert len(dry_lines) >= 2, f"expected >=2 dry-run cache lines, got {dry_lines}\nstdout:\n{result.stdout}"
+
+
+def test_windows_update_cache_removed_on_force(tmp_path: Path) -> None:
+    """Windows --force must delete cache files."""
+    pwsh = _require_tool("pwsh")
+    local_app_data = tmp_path / "local-app-data"
+    home = tmp_path / "home"
+    install_dir = local_app_data / "mid" / "bin"
+    install_dir.mkdir(parents=True)
+    binary = install_dir / "mid.exe"
+    binary.write_text("fake mid binary", encoding="utf-8")
+
+    candidates: list[Path] = []
+    p1 = local_app_data / "mid" / "update_cache.json"
+    p1.parent.mkdir(parents=True, exist_ok=True)
+    p1.write_text("{}", encoding="utf-8")
+    candidates.append(p1)
+    p2 = home / ".cache" / "mid" / "update_cache.json"
+    p2.parent.mkdir(parents=True, exist_ok=True)
+    p2.write_text("{}", encoding="utf-8")
+    candidates.append(p2)
+    p3 = home / ".config" / "mid" / ".update_cache.json"
+    p3.parent.mkdir(parents=True, exist_ok=True)
+    p3.write_text("{}", encoding="utf-8")
+    candidates.append(p3)
+    p4 = home / ".config" / "mid" / "update_cache.json"
+    p4.write_text("{}", encoding="utf-8")
+    candidates.append(p4)
+    p5 = home / "Library" / "Caches" / "mid" / "update_cache.json"
+    p5.parent.mkdir(parents=True, exist_ok=True)
+    p5.write_text("{}", encoding="utf-8")
+    candidates.append(p5)
+
+    for p in candidates:
+        assert p.exists()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "MID_DISABLE_PERSIST_PATH_UPDATE": "1",
+            "LOCALAPPDATA": str(local_app_data),
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+        }
+    )
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(REPO_ROOT / "uninstall.ps1"), "-Force"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    stdout_lower = result.stdout.lower()
+    assert "removed" in stdout_lower
+    assert "update checker cache" in stdout_lower
+    assert "update_cache.json" in result.stdout
+    for p in candidates:
+        assert not p.exists(), f"expected {p} to be deleted"
+
+    # home-based parents that were exclusive should be gone when empty
+    assert not (home / ".cache" / "mid").exists()
+    assert not (home / "Library" / "Caches" / "mid").exists()
+    # .config/mid had two files both removed -> should be gone
+    assert not (home / ".config" / "mid").exists()
+
+
+def test_windows_update_cache_custom_xdg(tmp_path: Path) -> None:
+    """Windows must respect XDG_CACHE_HOME / XDG_CONFIG_HOME overrides."""
+    pwsh = _require_tool("pwsh")
+    local_app_data = tmp_path / "local-app-data"
+    home = tmp_path / "home"
+    xdg_cache = tmp_path / "custom_cache"
+    xdg_config = tmp_path / "custom_config"
+
+    # custom XDG candidates
+    custom_cache_file = xdg_cache / "mid" / "update_cache.json"
+    custom_cache_file.parent.mkdir(parents=True, exist_ok=True)
+    custom_cache_file.write_text("{}", encoding="utf-8")
+    custom_config_dot = xdg_config / "mid" / ".update_cache.json"
+    custom_config_dot.parent.mkdir(parents=True, exist_ok=True)
+    custom_config_dot.write_text("{}", encoding="utf-8")
+    custom_config_legacy = xdg_config / "mid" / "update_cache.json"
+    custom_config_legacy.write_text("{}", encoding="utf-8")
+
+    # also create a default HOME cache to ensure both are cleaned
+    default_cache = home / ".cache" / "mid" / "update_cache.json"
+    default_cache.parent.mkdir(parents=True, exist_ok=True)
+    default_cache.write_text("{}", encoding="utf-8")
+
+    for p in [custom_cache_file, custom_config_dot, custom_config_legacy, default_cache]:
+        assert p.exists()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "MID_DISABLE_PERSIST_PATH_UPDATE": "1",
+            "LOCALAPPDATA": str(local_app_data),
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "XDG_CACHE_HOME": str(xdg_cache),
+            "XDG_CONFIG_HOME": str(xdg_config),
+        }
+    )
+
+    # ensure LOCALAPPDATA parent exists to avoid LOCALAPPDATA error
+    (local_app_data / "mid").mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(REPO_ROOT / "uninstall.ps1"), "-Force"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    stdout_lower = result.stdout.lower()
+    assert "removed" in stdout_lower
+    assert "update checker cache" in stdout_lower
+
+    assert not custom_cache_file.exists(), "custom XDG cache file should be deleted"
+    assert not custom_config_dot.exists()
+    assert not custom_config_legacy.exists()
+    assert not default_cache.exists()
+    assert not (xdg_cache / "mid").exists()
+    assert not (xdg_config / "mid").exists()
 
 
 def test_linux_help() -> None:
