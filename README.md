@@ -60,6 +60,30 @@ python -m pip install --user "mid==1.2.3"
 - Update to latest stable: clear `MID_VERSION` and rerun the installer.
 - Rollback: set `MID_VERSION=vX.Y.Z` and rerun the same installer command.
 
+### Update checker
+
+`mid` shows a non-intrusive update banner on stderr when a newer release is available:
+
+```
+Update available: 0.1.1 -> 0.2.0
+  curl -fsSL https://raw.githubusercontent.com/ezeprimo/mid/main/install.sh | bash
+  or: pipx install --force 'mid==0.2.0'
+  https://github.com/ezeprimo/mid/releases
+```
+
+On Windows the installer line uses `irm https://raw.githubusercontent.com/ezeprimo/mid/main/install.ps1 | iex`.
+
+Behavior:
+- TTY only — no banner when stderr is not a terminal, when `CI` or `GITHUB_ACTIONS` is set, or when `TERM=dumb`.
+- Throttled to one GitHub API check per 24 hours (cache at `platformdirs.user_cache_dir("mid")/update_cache.json` or `~/.config/mid/.update_cache.json`).
+- Suppressed for `--help`/`-h`/`--version`, `--list-formats`, `--json`, and non-trunk commands.
+- Never writes to stdout and never changes exit codes (0–3).
+- Network timeout is 2 seconds; failures are silent.
+
+Opt-out (any one is enough):
+- `MID_NO_UPDATE_CHECK=1` (also accepts `true`/`yes`/`on`, case-insensitive)
+- `CI=1` or `GITHUB_ACTIONS=1` or `TERM=dumb`
+
 ### Uninstall
 
 Use the bootstrap uninstall scripts (same pattern as install — no admin/sudo required):

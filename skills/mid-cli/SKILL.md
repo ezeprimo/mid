@@ -43,6 +43,13 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 5. Always verify a real conversion works (not just `--help`).
 6. Use exit codes to decide next action.
 
+## Update Checker
+
+- `mid` prints an update banner to **stderr only** when a newer GitHub Release exists (TTY, 24h throttle).
+- Banner is suppressed on `--help`/`-h`/`--version`, `--list-formats`, `--json`, non-TTY, `CI`/`GITHUB_ACTIONS`/`TERM=dumb`, or non-trunk commands.
+- Opt-out: `MID_NO_UPDATE_CHECK=1` (also `true`/`yes`/`on`, case-insensitive).
+- Cache: `platformdirs.user_cache_dir("mid")/update_cache.json` fallback `~/.config/mid/.update_cache.json`, perms 0700/0600, 24h `CACHE_TTL=86400`.
+
 ## Output Contract
 
 Return how `mid` was resolved (binary path from `which mid` or `where mid`, `mid --version` output), the exact command executed, the input/output paths, whether the conversion was real or mocked, and any warnings or issues found.
