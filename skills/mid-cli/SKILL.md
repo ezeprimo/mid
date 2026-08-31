@@ -33,6 +33,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 | Check supported formats | `mid --list-formats` |
 | Need inline help | `mid help <command>` |
 | Legacy `.doc/.xls/.ppt` input | Stop and explain the format is intentionally unsupported for conversion. |
+| Need to verify if update available / user asks about updates | Compare `mid --version` with latest via `fetch_latest_version()` or GitHub API; respect `MID_NO_UPDATE_CHECK` and TTY/CI guards; surface banner if newer. |
 
 ## Execution Steps
 
@@ -42,6 +43,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 4. For batch: `mid batch <dir> -o <outdir> [--recursive --preserve | --recursive --flatten]`
 5. Always verify a real conversion works (not just `--help`).
 6. Use exit codes to decide next action.
+7. If update verification is appropriate (user asks, long session, before recommending install) and not opted out, check latest version and surface banner if newer (see Update Checker).
 
 ## Update Checker
 
@@ -50,9 +52,21 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 - Opt-out: `MID_NO_UPDATE_CHECK=1` (also `true`/`yes`/`on`, case-insensitive).
 - Cache: `platformdirs.user_cache_dir("mid")/update_cache.json` fallback `~/.config/mid/.update_cache.json`, perms 0700/0600, 24h `CACHE_TTL=86400`.
 
+### For Agents — Verifying New Versions
+
+- **When to check:** before suggesting `mid` usage if `MID_NO_UPDATE_CHECK` not set and stderr is TTY-like, when user asks about updates, or periodically in long sessions.
+- **How to check (prefer in order):**
+  1. `mid --version` to get current.
+  2. In Python: `python -c "from mid.update_checker import fetch_latest_version, is_newer; print(fetch_latest_version())"` (2s timeout, silent failures).
+  3. Fallback shell: `gh api repos/ezeprimo/mid/releases/latest --jq .tag_name` or `curl -s https://api.github.com/repos/ezeprimo/mid/releases/latest | jq -r .tag_name`.
+  4. Compare with `is_newer(latest, current)` or `packaging.version.Version`; if newer and TTY, surface the same banner text (`curl | bash` / `pipx` / `irm`).
+- **Respect opt-out:** if `MID_NO_UPDATE_CHECK` truthy or `CI`/`GITHUB_ACTIONS`/`TERM=dumb`, do not check or mention.
+- **Cache awareness:** check is throttled 24h via cache file above; to force immediate check, remove cache file or call `fetch_latest_version()` directly.
+- **Report in Output Contract:** include current vs latest if checked and whether banner was shown.
+
 ## Output Contract
 
-Return how `mid` was resolved (binary path from `which mid` or `where mid`, `mid --version` output), the exact command executed, the input/output paths, whether the conversion was real or mocked, and any warnings or issues found.
+Return how `mid` was resolved (binary path from `which mid` or `where mid`, `mid --version` output), the exact command executed, the input/output paths, whether the conversion was real or mocked, any warnings or issues found, and if update was checked: current vs latest and whether banner was shown.
 
 ## References
 

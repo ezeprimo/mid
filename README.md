@@ -98,7 +98,7 @@ irm https://raw.githubusercontent.com/ezeprimo/mid/main/uninstall.ps1 | iex
 curl -fsSL https://raw.githubusercontent.com/ezeprimo/mid/main/uninstall.sh | bash
 ```
 
-The uninstaller removes the `mid` binary, cleans up the installer PATH entry, and removes install directories if empty. Safe to run even if `mid` was partially installed or already removed.
+The uninstaller removes the `mid` binary, cleans up the installer PATH entry, removes install directories if empty, and removes the update checker cache file. Safe to run even if `mid` was partially installed or already removed. Uninstall scripts remove the cache file as well.
 
 ## Core commands
 
