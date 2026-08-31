@@ -74,9 +74,7 @@ def _create_linux_state(
     }
 
 
-def _create_cache_files(
-    home: Path, xdg_cache: Path | None = None, xdg_config: Path | None = None
-) -> list[Path]:
+def _create_cache_files(home: Path, xdg_cache: Path | None = None, xdg_config: Path | None = None) -> list[Path]:
     """Create update-checker cache files mirroring uninstall.sh candidates.
 
     Mirrors ``uninstall.sh`` logic exactly::

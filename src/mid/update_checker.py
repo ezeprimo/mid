@@ -137,6 +137,7 @@ def is_newer(latest: str, current: str) -> bool:
     InvalidVersion or parse failure.
     """
     try:
+
         def _normalize(v: str) -> str:
             v = str(v).strip()
             if v.lower().startswith("v"):

@@ -11,8 +11,6 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from mid import __version__
 from mid.cli import main
 from mid.update_checker import (
@@ -456,7 +454,6 @@ class TestCheckAndNotify:
             with patch("mid.update_checker.should_check", return_value=True):
                 with patch("mid.update_checker.fetch_latest_version", return_value="9.9.9"):
                     # Ensure no cache
-                    err = StringIO()
                     # Need to make sys.stderr.isatty true via patch, but check_and_notify uses should_check mock, so not needed
                     # Capture stderr via patching sys.stderr to StringIO with isatty True
                     fake_stderr = StringIO()
@@ -784,7 +781,7 @@ class TestMainIntegration:
             # But _run's redirect makes isatty false, so already suppressed. Need to test with isatty true but flags present
             # So we patch isatty True and then call _run; _run's redirect will override isatty? Need to directly test check_and_notify via main's finally?
             # Instead test that main with --help doesn't call fetch
-            with patch("mid.update_checker.should_check", return_value=False) as mock_should:
+            with patch("mid.update_checker.should_check", return_value=False):
                 code, out, err = _run(["--help"])
                 # should_check should have been called and returned False, but we mocked to False, so fetch not called
                 # Instead test real should_check logic: patch isatty True and env, then call main with --help and ensure fetch not called
