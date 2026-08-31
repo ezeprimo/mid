@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-31
+
+### Added
+
+- **Update checker banner**: TTY stderr banner when newer GitHub Release exists, 24h throttle (CACHE_TTL=86400), cache at platformdirs.user_cache_dir("mid")/update_cache.json fallback ~/.config/mid/.update_cache.json, perms 0700/0600, guards isatty/CI/GITHUB_ACTIONS/TERM=dumb/--help/--version/--json/--list-formats/MID_NO_UPDATE_CHECK, trunk allowlist, lazy httpx→urllib 2s timeout, rich optional, Windows irm variant, hook in cli.py:main() finally preserving exit codes 0-3
+- **Uninstall cache cleanup**: uninstall.sh and uninstall.ps1 now remove update checker cache (6 candidates with XDG overrides, dedupe, --dry-run/-DryRun, empty parent rmdir) — respects XDG_CACHE_HOME/XDG_CONFIG_HOME
+- **Agent verification workflow**: skills/mid-cli/SKILL.md new Decision Gate, Execution Step 7, and For Agents — Verifying New Versions (when/how, fetch_latest_version/is_newer, gh api/curl fallback, opt-out, cache 24h)
+- **Dependencies**: platformdirs>=3.0, packaging>=24.0, httpx>=0.27, optional rich>=13.0
+
+### Fixed
+
+- Ruff lint fixes for update checker tests (F401/F841) and ruff format
+
+### Tests
+
+- **tests/test_update_checker.py**: 44 tests covering cache, semver, guards, banner stderr, throttle
+- **tests/release/test_uninstall_bootstrap_contract.py**: +7 contract tests for cache cleanup dry-run/force/XDG/keep.txt (Linux bash + Windows pwsh)
+
 ## [0.1.1] — 2026-06-05
 
 ### Fixed
