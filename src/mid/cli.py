@@ -39,6 +39,11 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="list supported file formats and exit",
     )
+    parser.add_argument(
+        "--list-backends",
+        action="store_true",
+        help="list available backends and exit",
+    )
 
     sub = parser.add_subparsers(dest="command", help="available commands")
 
@@ -47,6 +52,7 @@ def setup_parser() -> argparse.ArgumentParser:
     conv.add_argument("file", nargs="?", help="path to the input file")
     conv.add_argument("-o", "--output", help="write output to FILE instead of stdout")
     conv.add_argument("--json", action="store_true", help="emit JSON with metadata")
+    conv.add_argument("--backend", help="backend to use for conversion")
 
     # -- batch -------------------------------------------------------------
     bat = sub.add_parser("batch", help="convert all supported files in a directory")
@@ -102,7 +108,51 @@ def handler_convert(args: argparse.Namespace) -> None:
     if not path.is_file():
         _exit_arg(f"not a file: {path}")
 
-    # THEN resolve converter
+    # Backend handling — additive, preserves existing path when no --backend
+    backend_name = getattr(args, "backend", None)
+    if backend_name is not None:
+        from mid.backends.registry import registry
+
+        b = registry.get(backend_name)
+        if b is None:
+            available = ", ".join([x.name for x in registry.list_all()]) or "none"
+            print(f"error: unknown backend '{backend_name}'; available backends: {available}", file=sys.stderr)
+            sys.exit(2)
+        avail = b.is_available()
+        if not avail.available:
+            reason = avail.reason or "unavailable"
+            print(f"error: backend '{backend_name}' unavailable: {reason}", file=sys.stderr)
+            sys.exit(3)
+        # delegate to backend via engine
+        from mid.engine import convert_file as cf
+
+        result = cf(path, backend=backend_name)
+        if not result.success:
+            _exit_conv(result.error or "unknown error")
+        ext = path.suffix.lower()
+        if getattr(args, "json", False):
+            payload = {
+                "content": result.content,
+                "metadata": {
+                    "source": path.name,
+                    "format": ext.lstrip("."),
+                    "success": True,
+                },
+                "error": None,
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif getattr(args, "output", None):
+            output_path = Path(args.output)
+            try:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(result.content, encoding="utf-8")
+            except OSError as exc:
+                _exit_conv(f"could not write output file '{output_path}': {exc}")
+        else:
+            print(result.content)
+        return
+
+    # THEN resolve converter (no backend flag — legacy path unchanged)
     ext = path.suffix.lower()
 
     if not ext:
@@ -323,6 +373,19 @@ def main() -> None:
                     supported.append(ext)
             print(f"Supported: {' '.join(supported)}")
             print(f"Legacy (migrate first): {' '.join(legacy)}")
+            return
+
+        # --list-backends top-level flag (bounded 2s per backend)
+        if getattr(args, "list_backends", False):
+            from mid.backends.registry import registry
+
+            for b in registry.list_all():
+                avail = b.is_available()
+                if avail.available:
+                    print(f"{b.name}: available")
+                else:
+                    reason = avail.reason or "unknown"
+                    print(f"{b.name}: unavailable ({reason})")
             return
 
         # No subcommand → show help
