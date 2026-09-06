@@ -64,5 +64,12 @@ class Backend(ABC):
                 reason=str(exc) or "probe failed",
                 checked_at=datetime.now(timezone.utc),
             )
-        self._cached = avail
+        # Resilience fix (R4-001): do not cache transient failures forever — allow retry.
+        # Only cache available=True; unavailable results are returned without caching
+        # so a fleeting failure (TimeoutExpired, ENOSPC, fleeting PATH) is retried.
+        if avail.available:
+            self._cached = avail
+        else:
+            # Do not cache failures — clear any prior failure cache to force re-probe
+            self._cached = None
         return avail
