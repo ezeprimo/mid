@@ -132,9 +132,64 @@ mid batch ./docs -o ./out --recursive --preserve
 - `.ppt`
 
 Legacy Office formats are currently detected and rejected with a clear message to migrate to modern formats first.
+When a local LibreOffice is available, `mid --backend libreoffice` can convert them (see LibreOffice backend below).
 
 > Real conversion capability depends on installed MarkItDown extras and system tools.
 > For this repo, `markitdown[all]` inside local `.venv` is the recommended setup.
+
+## LibreOffice backend (optional, local)
+
+`mid` ships a `libreoffice` backend that delegates to a **local** LibreOffice installation via headless `soffice`.
+No bundling, no Docker image, no MS Office automation — the backend only uses `soffice` already on your `PATH`
+or at `MID_LIBREOFFICE_PATH`.
+
+### Prerequisites
+
+- **LibreOffice 7.6+ or 24.8+** — minimal package `libreoffice-writer` (Debian/Ubuntu) or `brew install --cask libreoffice` (macOS) or the official Windows installer.
+- Verify: `soffice --version` should print a version like `LibreOffice 7.6.2.1` or `24.8.1.2`.
+- The backend is discovered via `mid --list-backends` (2s probe, never raises, actionable reason on failure).
+
+### Usage
+
+```bash
+# list backends and availability
+mid --list-backends
+
+# convert via LibreOffice (auto-detects soffice)
+mid convert ./docs/report.doc --backend libreoffice
+mid convert ./docs/report.doc --backend libreoffice -o ./out/report.md
+
+# when LibreOffice is not on PATH, point to it explicitly
+MID_LIBREOFFICE_PATH=/usr/bin/soffice mid convert ./docs/report.doc --backend libreoffice
+MID_LIBREOFFICE_PATH="C:\Program Files\LibreOffice\program\soffice.bin" mid convert ./docs/report.doc --backend libreoffice
+```
+
+Exit codes: unknown backend `2`, unavailable backend `3` (with install hint), conversion failure `1`, success `0`.
+`--list-formats` stays frozen — the backend is selected explicitly via `--backend libreoffice`.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `MID_LIBREOFFICE_PATH` | — | Absolute path to `soffice`/`libreoffice`/`soffice.bin`. Takes precedence over `PATH` chain `soffice → libreoffice → soffice.bin`. Must be an existing file; invalid falls back to the chain. |
+| `MID_LIBREOFFICE_TIMEOUT` | `30` | Headless conversion timeout in seconds, clamped to `5..300`. Invalid values fall back to `30`. Probe timeout is fixed at `2`s. |
+
+### Supported formats (backend)
+
+When `--backend libreoffice` is used, the backend declares:
+
+- `.doc`, `.docx`, `.odt`, `.rtf`
+- `.xls`, `.xlsx`, `.ods`
+- `.ppt`, `.pptx`, `.odp`
+
+`probe()` does not filter by extension; `convert()` rejects unsupported extensions with `ConvertResult(success=False)`.
+
+### Limits and notes
+
+- Headless flags: `--headless --invisible --norestore --nolockcheck --convert-to "html:XHTML Writer File:UTF8" --outdir <tmp>` with `shell=False`, `capture_output=True`.
+- Temporary files use `TemporaryDirectory(prefix="mid-libreoffice-")` + `shutil.copy2` and are cleaned on success **and** failure.
+- Output is located as `<stem>.html` then largest `*.html` with `size>0`; capped at **20 MB** before read; read as `utf-8 strict`; non-zero exit, missing/empty output, `TimeoutExpired`, `UnicodeDecodeError`, and profile-lock (`lock` in stderr) all map to `ConvertResult(success=False)` with truncated `stderr[:500]` and hint, never raise.
+- No bundling, no Docker image, no MS automation, no `--libreoffice-path` CLI flag, no dynamic filters, no version-gated extensions, no threads/FS cache/entry_points.
 
 ## Development and testing (local `.venv`)
 
