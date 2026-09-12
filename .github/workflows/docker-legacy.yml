@@ -1,0 +1,64 @@
+# Legacy image: build + headless smoke for the LibreOffice variant.
+#
+# Scoped triggers only — slim-image jobs in ci.yml are untouched.
+# No registry push: the image is built for verification, not published.
+
+name: docker-legacy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/Dockerfile.legacy"
+      - "docker/README.md"
+      - "tests/fixtures/legacy/**"
+      - ".github/workflows/docker-legacy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker/Dockerfile.legacy"
+      - "docker/README.md"
+      - "tests/fixtures/legacy/**"
+      - ".github/workflows/docker-legacy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build legacy image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.legacy
+          tags: mid:legacy
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check soffice and backend availability
+        run: |
+          docker run --rm mid:legacy --list-backends | grep -E "libreoffice: available"
+
+      - name: Smoke mount conversion (.doc to .md)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/tests/fixtures/legacy:/data" \
+            mid:legacy convert --backend libreoffice /data/sample.doc -o /data/out.md
+          test -s "${{ github.workspace }}/tests/fixtures/legacy/out.md"
+          grep -q "Hello legacy" "${{ github.workspace }}/tests/fixtures/legacy/out.md"
+          rm -f "${{ github.workspace }}/tests/fixtures/legacy/out.md"
+
+      - name: Check no tmp residue after conversion
+        run: |
+          docker run --rm --entrypoint sh \
+            -v "${{ github.workspace }}/tests/fixtures/legacy:/data" \
+            mid:legacy -c 'mid convert --backend libreoffice /data/sample.doc -o /data/out-tmp.md && test -z "$(ls /tmp | grep mid-libreoffice- || true)"; rc=$?; rm -f /data/out-tmp.md; exit $rc'
