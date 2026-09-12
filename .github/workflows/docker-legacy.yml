@@ -50,6 +50,9 @@ jobs:
 
       - name: Smoke mount conversion (.doc to .md)
         run: |
+          # The image runs as non-root USER mid, so the mounted host dir
+          # must be writable by the container user (runner owns it).
+          chmod a+rwX "${{ github.workspace }}/tests/fixtures/legacy"
           docker run --rm \
             -v "${{ github.workspace }}/tests/fixtures/legacy:/data" \
             mid:legacy convert --backend libreoffice /data/sample.doc -o /data/out.md

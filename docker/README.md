@@ -95,6 +95,8 @@ Windows PowerShell example:
 docker run --rm -v ${PWD}\tests\fixtures\legacy:/data mid:legacy convert --backend libreoffice /data/sample.doc -o /data/out.md
 ```
 
+> **Host directory permissions:** the image runs as non-root `USER mid`, so the mounted host directory must be writable by the container user — otherwise output writes fail with `Permission denied` (exit 1). On Linux/macOS: `chmod a+rwX <host-dir>` before mounting.
+
 ### Architecture, pins, resources
 
 - Architecture: `linux/amd64`.
