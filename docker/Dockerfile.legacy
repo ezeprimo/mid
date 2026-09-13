@@ -1,0 +1,85 @@
+# syntax=docker/dockerfile:1
+
+# ============================================================
+# Legacy image variant: mid CLI + headless LibreOffice for
+# .doc/.xls/.ppt conversion via the LibreOfficeBackend.
+#
+# Builder stage is copied verbatim from docker/Dockerfile.
+# Pinned LibreOffice set gated by the bookworm spike
+# (2026-09-12, LO 7.4.7.2, filter "html:XHTML Writer File:UTF8"
+# verified for .doc; see docker/README.md).
+# ============================================================
+
+# ============================================================
+# Builder stage: build mid Linux binary with PyInstaller
+# ============================================================
+FROM python:3.12-slim-bookworm AS builder
+
+LABEL maintainer="ezeprimo"
+LABEL description="mid CLI - Document to Markdown converter using Microsoft MarkItDown"
+
+WORKDIR /build
+
+# PyInstaller requires objdump on Linux.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir pyinstaller "markitdown[all]"
+
+COPY pyproject.toml ./
+COPY src/ src/
+
+RUN python -m PyInstaller --onefile --name mid-linux-amd64 --clean \
+    --paths src \
+    --hidden-import markitdown \
+    --collect-data magika \
+    --exclude-module torch \
+    --exclude-module tensorflow \
+    --exclude-module transformers \
+    --exclude-module scipy \
+    --exclude-module matplotlib \
+    --exclude-module IPython \
+    --exclude-module jedi \
+    --exclude-module zmq \
+    --exclude-module pytest \
+    --distpath dist \
+    --workpath build \
+    --specpath . \
+    src/mid/__main__.py
+
+# ============================================================
+# Runtime stage: mid + headless LibreOffice (legacy only)
+# ============================================================
+FROM debian:bookworm-slim
+
+LABEL maintainer="ezeprimo"
+LABEL description="mid CLI legacy image - Document to Markdown converter with headless LibreOffice for .doc/.xls/.ppt"
+
+# Spike-gated pins (bookworm, 2026-09-12): writer+calc+impress cover
+# the backend's doc/xls/ppt inputs. Deps (e.g. libreoffice-core)
+# resolve from the same snapshot via apt.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libreoffice-writer=4:7.4.7-1+deb12u14 \
+        libreoffice-calc=4:7.4.7-1+deb12u14 \
+        libreoffice-impress=4:7.4.7-1+deb12u14 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN adduser --disabled-password --gecos "" mid
+
+# soffice needs a writable HOME for its user profile and honours
+# TMPDIR for conversions (backend uses TemporaryDirectory with
+# prefix "mid-libreoffice-", auto-cleaned on success and failure).
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/tmp HOME=/home/mid
+RUN mkdir -p /home/mid && chown mid:mid /home/mid
+
+COPY --from=builder /build/dist/mid-linux-amd64 /usr/local/bin/mid
+RUN chmod +x /usr/local/bin/mid
+
+USER mid
+WORKDIR /workspace
+
+ENTRYPOINT ["mid"]
+CMD ["--help"]

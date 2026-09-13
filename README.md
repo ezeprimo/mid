@@ -290,17 +290,19 @@ docker run --rm -v /path/to/docs:/docs mid batch /docs -o /docs/out --recursive 
 
 For the detailed Docker guide and future LibreOffice extension notes, see `docker/README.md`.
 
-### Future: legacy format support
+### Legacy variant with LibreOffice
 
-Add LibreOffice to the image to unlock `.doc`, `.xls`, `.ppt` conversion:
+For `.doc` (representative; `.xls` / `.ppt` via the same backend) use the
+legacy image variant — slim image and local CLI behavior are unchanged:
 
-```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libreoffice-common libreoffice-writer \
-    && rm -rf /var/lib/apt/lists/*
+```bash
+docker build -f docker/Dockerfile.legacy -t mid:legacy .
+docker run --rm mid:legacy --list-backends
+docker run --rm -v "$(pwd)/tests/fixtures/legacy:/data" mid:legacy convert --backend libreoffice /data/sample.doc -o /data/out.md
 ```
 
-Rebuild and run — no other configuration needed. The image is structured with this extension point ready.
+Scope: `linux/amd64`, pinned LibreOffice 7.4.7 (bookworm), ~1 GB image.
+Details, pins, resources, and exit codes: `docker/README.md` (legacy section).
 
 ## Current status and scope
 
