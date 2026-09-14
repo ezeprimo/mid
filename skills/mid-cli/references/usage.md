@@ -62,10 +62,26 @@ $env:MID_VERSION = "v1.2.3"
 irm https://raw.githubusercontent.com/ezeprimo/mid/main/install.ps1 | iex
 ```
 
+## Legacy backends (.doc / .xls / .ppt)
+
+```bash
+# Discover backend availability (2s never-raise probe)
+mid --list-backends
+
+# Convert via local headless LibreOffice
+mid convert ./docs/report.doc --backend libreoffice -o ./out/report.md
+
+# Convert via Docker legacy image (no local install)
+docker build -f docker/Dockerfile.legacy -t mid:legacy .
+docker run --rm -v "$(pwd)/tests/fixtures/legacy:/data" mid:legacy convert --backend libreoffice /data/sample.doc -o /data/out.md
+```
+
+Notes: local conversion needs `soffice` on PATH (`MID_LIBREOFFICE_PATH` override, `MID_LIBREOFFICE_TIMEOUT` default 30s, 5..300). The mounted host dir must be writable by container `USER mid` (`chmod a+rwX <host-dir>`). On LibreOffice 7.4, `.doc` converts but `.xls`/`.ppt` yield empty output.
+
 ## Format guidance
 
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
-- Legacy formats intentionally rejected: `.doc`, `.xls`, `.ppt`
+- Legacy formats `.doc`, `.xls`, `.ppt` are rejected by default but convertible via a legacy backend (see above).
 
 For the authoritative list at runtime, run `mid --list-formats`.
 
@@ -74,9 +90,9 @@ For the authoritative list at runtime, run `mid --list-formats`.
 | Code | Meaning |
 | --- | --- |
 | 0 | Success |
-| 1 | Conversion error (MarkItDown / converter failure) |
-| 2 | Argument error (missing file, invalid flag, etc.) |
-| 3 | Unsupported format (including legacy `.doc` / `.xls` / `.ppt`) |
+| 1 | Conversion error (MarkItDown / converter failure, incl. legacy conversion failure) |
+| 2 | Argument error (missing file, invalid flag, unknown backend) |
+| 3 | Unsupported format, or unavailable backend when `--backend` names one that is not installed |
 
 ## Inline help
 
