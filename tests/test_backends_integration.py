@@ -178,7 +178,6 @@ class TestConvertFileBackend:
         assert result.success is False
         assert "boom" in (result.error or "")
 
-
     def test_opt_in_backend_probed_on_explicit_selection(self, tmp_path: Path):
         class OptInFake(FakeBackend):
             def __init__(self):

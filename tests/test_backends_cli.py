@@ -138,9 +138,7 @@ class FakeOptInBackend(FakeBackend):
 
 def test_convert_opt_in_backend_is_probed_on_explicit_selection(tmp_path, capsys):
     # Explicit --backend is consent to probe: the opt-in gate must not block it.
-    registry.register(
-        FakeOptInBackend(available=False, reason="Office not detected — install Word/Excel")
-    )
+    registry.register(FakeOptInBackend(available=False, reason="Office not detected — install Word/Excel"))
     f = tmp_path / "sample.doc"
     f.write_text("x", encoding="utf-8")
     from mid.cli import main

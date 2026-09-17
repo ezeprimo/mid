@@ -730,8 +730,7 @@ def test_convert_excel_frameset_resolves_sheet_content(tmp_path):
             companion.mkdir(exist_ok=True)
             (companion / "sheet001.html").write_bytes(
                 '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
-                "</head><body><table><tr><td>Hello legacy spike xls</td></tr></table></body></html>"
-                .encode("latin-1")
+                "</head><body><table><tr><td>Hello legacy spike xls</td></tr></table></body></html>".encode("latin-1")
             )
             (companion / "tabstrip.html").write_text("<html><body>tabs</body></html>", encoding="utf-8")
             html_path.write_text(
@@ -795,10 +794,7 @@ def test_copy_exclusive_lock_maps_to_file_locked(tmp_path):
     src.write_text("x", encoding="utf-8")
 
     def locked_copy(*args, **kwargs):
-        exc = OSError(
-            "[WinError 32] El proceso no tiene acceso al archivo porque está siendo "
-            "utilizado por otro proceso"
-        )
+        exc = OSError("[WinError 32] El proceso no tiene acceso al archivo porque está siendo utilizado por otro proceso")
         exc.winerror = 32
         raise exc
 
