@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Office backend Word HTML sanitizing (#32)**: strip `[if ...]` conditional blocks (list-number field codes leaked into headings) with inner content and normalize NBSP entities/literals to regular spaces before MarkItDown
+
 ### Added
 
 - **Legacy backend framework (#12)**: shared `Backend` ABC + registry + local tool detection (2s cached never-raise probe) with `BackendAdapter` and engine/CLI seams; explicit selection via `mid convert --backend <name>` and `mid --list-backends`; exit `2` unknown backend, `3` unavailable backend
