@@ -118,7 +118,8 @@ def handler_convert(args: argparse.Namespace) -> None:
             available = ", ".join([x.name for x in registry.list_all()]) or "none"
             print(f"error: unknown backend '{backend_name}'; available backends: {available}", file=sys.stderr)
             sys.exit(2)
-        avail = b.is_available()
+        # Explicit --backend selection is consent to probe, including opt-in backends.
+        avail = b.is_available(refresh=True)
         if not avail.available:
             reason = avail.reason or "unavailable"
             print(f"error: backend '{backend_name}' unavailable: {reason}", file=sys.stderr)

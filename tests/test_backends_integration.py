@@ -179,6 +179,27 @@ class TestConvertFileBackend:
         assert "boom" in (result.error or "")
 
 
+    def test_opt_in_backend_probed_on_explicit_selection(self, tmp_path: Path):
+        class OptInFake(FakeBackend):
+            def __init__(self):
+                super().__init__(name="fake-office", available=False, reason="Office not detected")
+                self.opt_in = True
+                self.probe_calls = 0
+
+            def probe(self) -> Availability:
+                self.probe_calls += 1
+                return super().probe()
+
+        registry.register(OptInFake())
+        src = tmp_path / "a.doc"
+        src.write_text("x", encoding="utf-8")
+        result = convert_file(src, backend="fake-office")
+        assert result.success is False
+        assert "Office not detected" in (result.error or "")
+        assert "opt-in" not in (result.error or "").lower()
+        assert registry.get("fake-office").probe_calls == 1
+
+
 class TestAdapterIntegration:
     def test_adapter_maps_raise(self):
         class Raises(Backend):

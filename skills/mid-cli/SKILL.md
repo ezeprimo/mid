@@ -22,6 +22,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 - If `mid` is not found on PATH, install via bootstrap installer.
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Legacy Office formats `.doc`, `.xls`, and `.ppt` are intentionally rejected; report that users must migrate them first.
+- Exception: on Windows with the `office` backend available (`mid --list-backends` shows it), offer `mid convert <file> --backend office` for `.doc`/`.xls` instead of stopping. `.ppt` always stays migrate-first (v1 scope: Word/Excel only).
 
 ## Decision Gates
 
@@ -32,7 +33,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 | Batch directory conversion | `mid batch <input> -o <output> [--recursive --preserve\|--recursive --flatten]` |
 | Check supported formats | `mid --list-formats` |
 | Need inline help | `mid help <command>` |
-| Legacy `.doc/.xls/.ppt` input | Stop and explain the format is intentionally unsupported for conversion. |
+| Legacy `.doc/.xls/.ppt` input | Stop and explain the format is intentionally unsupported for conversion. If `mid --list-backends` shows `office` available, offer `mid convert <file> --backend office` for `.doc`/`.xls` (never `.ppt`); map exit 2 (unknown backend) and exit 3 (unavailable with reason). |
 | Need to verify if update available / user asks about updates | Compare `mid --version` with latest via `fetch_latest_version()` or GitHub API; respect `MID_NO_UPDATE_CHECK` and TTY/CI guards; surface banner if newer. |
 
 ## Execution Steps

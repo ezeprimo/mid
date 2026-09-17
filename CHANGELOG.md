@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Office backend (Windows-only, opt-in)**: `office` backend converting legacy `.doc`/`.xls` via installed Word/Excel COM automation (`DispatchEx`, never attaches to a running instance). Registered only on `win32`, explicit `--backend office` required, `pywin32` behind the `office-windows` extra, `MID_OFFICE_PATH`/`MID_OFFICE_TIMEOUT` configuration, PID-scoped orphan cleanup, exit `2`/`3` mapping, `docs/office-backend.md`, explicit `--backend` selection now probes opt-in backends (`is_available(refresh=True)` in CLI/engine)
+
 ## [0.2.0] — 2026-08-31
 
 ### Added

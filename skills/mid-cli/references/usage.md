@@ -66,6 +66,12 @@ irm https://raw.githubusercontent.com/ezeprimo/mid/main/install.ps1 | iex
 
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Legacy formats intentionally rejected: `.doc`, `.xls`, `.ppt`
+- Exception: on Windows with the `office` backend available, `.doc`/`.xls` convert via `mid convert <file> --backend office` (see `docs/office-backend.md`). `.ppt` always stays migrate-first.
+
+```powershell
+mid --list-backends
+mid convert .\legacy\report.doc --backend office -o .\out\report.md
+```
 
 For the authoritative list at runtime, run `mid --list-formats`.
 
