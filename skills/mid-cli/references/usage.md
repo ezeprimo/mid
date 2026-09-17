@@ -82,6 +82,12 @@ Notes: local conversion needs `soffice` on PATH (`MID_LIBREOFFICE_PATH` override
 
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Legacy formats `.doc`, `.xls`, `.ppt` are rejected by default but convertible via a legacy backend (see above).
+- Exception: on Windows with the `office` backend available, `.doc`/`.xls` convert via `mid convert <file> --backend office` (see `docs/office-backend.md`). `.ppt` always stays migrate-first.
+
+```powershell
+mid --list-backends
+mid convert .\legacy\report.doc --backend office -o .\out\report.md
+```
 
 For the authoritative list at runtime, run `mid --list-formats`.
 

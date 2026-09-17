@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Legacy backend framework (#12)**: shared `Backend` ABC + registry + local tool detection (2s cached never-raise probe) with `BackendAdapter` and engine/CLI seams; explicit selection via `mid convert --backend <name>` and `mid --list-backends`; exit `2` unknown backend, `3` unavailable backend
 - **LibreOffice backend for local legacy conversion (#13)**: headless `soffice` backend (`--convert-to "html:XHTML Writer File:UTF8"`, isolated temp dirs, 20 MB output cap, strict UTF-8) delegating the HTML intermediate to MarkItDown; `MID_LIBREOFFICE_PATH` / `MID_LIBREOFFICE_TIMEOUT` (default 30s, 5..300); converts `.doc` (representative; `.xls`/`.ppt` via same backend)
 - **Docker legacy image with LibreOffice (#14)**: `docker/Dockerfile.legacy` (Debian bookworm-slim, pinned LibreOffice 7.4.7 writer+calc+impress, non-root `USER mid`, ~1 GB, `linux/amd64`) with documented mount conversion, host-dir permission notes, and `docker-legacy.yml` CI (build + `.doc→.md` smoke, GHA cache, no registry push)
+- **Office backend (Windows-only, opt-in)**: `office` backend converting legacy `.doc`/`.xls` via installed Word/Excel COM automation (`DispatchEx`, never attaches to a running instance). Registered only on `win32`, explicit `--backend office` required, `pywin32` behind the `office-windows` extra, `MID_OFFICE_PATH`/`MID_OFFICE_TIMEOUT` configuration, PID-scoped orphan cleanup, exit `2`/`3` mapping, `docs/office-backend.md`, explicit `--backend` selection now probes opt-in backends (`is_available(refresh=True)` in CLI/engine)
+
+### Fixed
+
+- **Office backend Word compat (#28)**: dropped the `WithWindow` keyword from `Documents.Open` (no such parameter — Word 2013 rejected it); hidden mode stays enforced via `Visible = False`
+- **Office backend Excel encoding + orphans (#29)**: intermediate HTML now decodes with precedence declared meta charset → UTF-8 → windows-1252 and is normalized back to UTF-8; COM app wrapper is popped from the holder right after the worker joins with `gc.collect()` in `finally`, so no `EXCEL.EXE`/`WINWORD.EXE` stays alive nondeterministically
+- **Office backend env-dependent test (#30)**: exit-2/exit-3 CLI mapping now covered by an env-independent stub test; the real-backend assertions skip (or assert gate-pass) based on the live `probe()` instead of assuming Office is absent
+- **Office backend Excel frameset (follow-up of #29)**: `xlHtml` containers now resolve the referenced sheet files from the companion directory (locale-independent, tabstrip excluded, directory-contained) and convert their combined content instead of the frameset placeholder
+- **Office backend lock taxonomy (follow-up of #29)**: numeric WinError 32/33/5 map to `file locked`/`permission denied` locale-independently (Spanish messages included); pre-COM copy failures route through `_map_error`
 
 ## [0.2.0] — 2026-08-31
 

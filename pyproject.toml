@@ -48,6 +48,9 @@ dev = [
 rich = [
     "rich>=13.0",
 ]
+office-windows = [
+    "pywin32>=306; sys_platform=='win32'",
+]
 
 [tool.ruff]
 target-version = "py310"

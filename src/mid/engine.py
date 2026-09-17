@@ -100,7 +100,8 @@ def convert_file(path: Path, *, backend: str | None = None) -> ConvertResult:
                 error=f"unknown backend '{backend}'; available: {available}",
             )
         try:
-            avail = b.is_available()
+            # Explicit backend= selection is consent to probe, including opt-in backends.
+            avail = b.is_available(refresh=True)
         except Exception as exc:  # never-raise
             return ConvertResult(content="", metadata={}, success=False, error=str(exc))
         if not avail.available:

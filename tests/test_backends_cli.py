@@ -125,6 +125,45 @@ def test_list_formats_frozen(capsys):
     assert lines[1].startswith("Legacy")
 
 
+class FakeOptInBackend(FakeBackend):
+    def __init__(self, name="fake-office", available=False, reason=None):
+        super().__init__(name=name, available=available, reason=reason)
+        self.opt_in = True
+        self.probe_calls = 0
+
+    def probe(self) -> Availability:
+        self.probe_calls += 1
+        return super().probe()
+
+
+def test_convert_opt_in_backend_is_probed_on_explicit_selection(tmp_path, capsys):
+    # Explicit --backend is consent to probe: the opt-in gate must not block it.
+    registry.register(FakeOptInBackend(available=False, reason="Office not detected — install Word/Excel"))
+    f = tmp_path / "sample.doc"
+    f.write_text("x", encoding="utf-8")
+    from mid.cli import main
+
+    with patch.object(sys, "argv", ["mid", "convert", str(f), "--backend", "fake-office"]):
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+    err = capsys.readouterr().err
+    assert "Office not detected" in err
+    assert "opt-in" not in err.lower()
+
+
+def test_convert_opt_in_available_succeeds(tmp_path, capsys):
+    registry.register(FakeOptInBackend(available=True))
+    f = tmp_path / "in.doc"
+    f.write_text("x", encoding="utf-8")
+    from mid.cli import main
+
+    with patch.object(sys, "argv", ["mid", "convert", str(f), "--backend", "fake-office"]):
+        main()
+    out = capsys.readouterr().out
+    assert "ok" in out
+
+
 def test_convert_success_exit_0(tmp_path, capsys):
     # register available backend and convert
     registry.register(FakeBackend(name="fake", available=True))

@@ -191,6 +191,28 @@ When `--backend libreoffice` is used, the backend declares:
 - Output is located as `<stem>.html` then largest `*.html` with `size>0`; capped at **20 MB** before read; read as `utf-8 strict`; non-zero exit, missing/empty output, `TimeoutExpired`, `UnicodeDecodeError`, and profile-lock (`lock` in stderr) all map to `ConvertResult(success=False)` with truncated `stderr[:500]` and hint, never raise.
 - No bundling, no Docker image, no MS automation, no `--libreoffice-path` CLI flag, no dynamic filters, no version-gated extensions, no threads/FS cache/entry_points.
 
+## Office backend (optional, Windows-only)
+
+On Windows, `mid` ships an `office` backend that converts legacy Word/Excel files (`.doc`, `.xls`) through an
+installed copy of Microsoft Office via COM automation. It never activates silently — `--backend office` is
+always required — and it is registered only on Windows (`win32`). Full detail: `docs/office-backend.md`.
+
+```powershell
+# list backends and availability
+mid --list-backends
+
+# convert via installed Office (Word/Excel 2016+ or Microsoft 365)
+mid convert .\legacy\report.doc --backend office -o .\out\report.md
+```
+
+- **Customer-provided Office** — `mid` never bundles or licenses Office. Requires the `office-windows` extra:
+  `pip install "mid[office-windows]"` (`pywin32`, lazy Windows-only import, never required on Linux/macOS).
+- **v1 scope: Word/Excel only** — `.ppt` stays on the migrate-first path.
+- Environment: `MID_OFFICE_PATH` (existing-file override, version signal only, never executed) and
+  `MID_OFFICE_TIMEOUT` (`30`, clamped `5..300`). Detection order: platform gate → `MID_OFFICE_PATH` →
+  App Paths (`WINWORD.EXE`, `EXCEL.EXE`) → `win32com` import → `HKCR\CurVer` version.
+- Exit codes: unknown backend `2`, unavailable backend `3` with actionable reason, conversion failure `1`, success `0`.
+
 ## Development and testing (local `.venv`)
 
 Use the project-local virtual environment for all Python commands:

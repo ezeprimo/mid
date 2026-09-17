@@ -23,6 +23,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Legacy Office formats `.doc`, `.xls`, `.ppt` are rejected by default; convert them explicitly via a legacy backend (`--backend libreoffice`) instead of reporting them as unsupported.
 - Discover backends at runtime with `mid --list-backends` (2s never-raise probe); never assume which backends are available.
+- Exception: on Windows with the `office` backend available (`mid --list-backends` shows it), offer `mid convert <file> --backend office` for `.doc`/`.xls` instead of stopping. `.ppt` always stays migrate-first (v1 scope: Word/Excel only).
 
 ## Decision Gates
 
@@ -33,7 +34,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 | Batch directory conversion | `mid batch <input> -o <output> [--recursive --preserve\|--recursive --flatten]` |
 | Check supported formats | `mid --list-formats` |
 | Need inline help | `mid help <command>` |
-| Legacy `.doc/.xls/.ppt` input | Convert via `mid convert <file> --backend libreoffice [-o <output>]`; only stop as unsupported if the backend is unavailable (exit 3) and no Docker legacy image is usable. |
+| Legacy `.doc/.xls/.ppt` input | Convert via `mid convert <file> --backend libreoffice [-o <output>]`; on Windows with the `office` backend available, offer `mid convert <file> --backend office` for `.doc`/`.xls` (never `.ppt`); only stop as unsupported if the backend is unavailable (exit 3) and no Docker legacy image is usable. Map exit 2 (unknown backend) and exit 3 (unavailable with reason). |
 | No local LibreOffice but Docker available | Use the legacy image: `docker run --rm -v <host-dir>:/data mid:legacy convert --backend libreoffice /data/<file> -o /data/out.md` (host dir must be writable by container `USER mid`). |
 | Need to verify if update available / user asks about updates | Compare `mid --version` with latest via `fetch_latest_version()` or GitHub API; respect `MID_NO_UPDATE_CHECK` and TTY/CI guards; surface banner if newer. |
 

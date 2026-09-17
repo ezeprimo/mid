@@ -1,5 +1,7 @@
 """Backends package — re-exports."""
 
+import sys
+
 from mid.backends.base import Availability, Backend
 from mid.backends.registry import BackendRegistry, registry
 from mid.backends.detection import which_tool, run_version
@@ -13,5 +15,15 @@ except ValueError:
     pass
 except Exception:
     pass
+
+if sys.platform == "win32":
+    try:
+        from mid.backends.office import OfficeBackend
+
+        registry.register(OfficeBackend())
+    except ValueError:
+        pass
+    except Exception:
+        pass
 
 __all__ = ["Availability", "Backend", "BackendRegistry", "registry", "which_tool", "run_version", "BackendAdapter"]
