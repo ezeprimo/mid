@@ -67,6 +67,9 @@ version. Only `available=True` results are cached.
 - Input is copied into the temp dir before COM opens it, so a file merely open
   in Office (shared-read) still converts without attaching to the live instance;
   an exclusively locked file fails fast with a mapped `file locked` error.
+- Word HTML is sanitized before MarkItDown: `[if ...]` conditional blocks
+  (list-number field codes leak into headings otherwise) are removed with their
+  inner content, and NBSP entities/literals become regular spaces.
 - Headless/server sessions without an Office installation fail with an
   actionable `Office not detected` reason — no silent automation.
 

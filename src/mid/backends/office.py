@@ -288,6 +288,35 @@ def _normalize_meta_charset(text: str) -> str:
     return _META_TAG_RE.sub(_fix_tag, text)
 
 
+# Word wraps list numbering in conditional blocks (e.g. <![if !supportLists]>)
+# whose marker text leaks through MarkItDown into headings (#32). Both the
+# downlevel-hidden (<!--...-->) and downlevel-revealed (<![...]>) forms are
+# removed WITH their inner content: inside supportLists conditionals there is
+# only auto-numbering/formatting spans, the paragraph text lives outside.
+_COND_HIDDEN_RE = re.compile(r"<!--\[if[^\]]*\]>.*?<!\[endif\]-->", re.IGNORECASE | re.DOTALL)
+_COND_REVEALED_RE = re.compile(r"<!\[if[^\]]*\]>.*?<!\[endif\]>", re.IGNORECASE | re.DOTALL)
+_NBSP_ENTITY_RE = re.compile(r"&(?:nbsp|#[0]*160|#[xX][0]*[aA]0);", re.IGNORECASE)
+_MULTI_SPACE_RE = re.compile(r"[^\S\n]{2,}")
+
+
+def _clean_word_html(text: str) -> str:
+    """Strip Word conditional blocks and normalize NBSP before MarkItDown (#32).
+
+    Removes ``[if ...]`` conditional comments (hidden and revealed forms,
+    content included) and maps NBSP entities/literals to regular spaces,
+    collapsing horizontal runs. Never raises.
+    """
+    try:
+        text = _COND_HIDDEN_RE.sub("", text)
+        text = _COND_REVEALED_RE.sub("", text)
+        text = _NBSP_ENTITY_RE.sub(" ", text)
+        text = text.replace("\u00a0", " ")
+        text = _MULTI_SPACE_RE.sub(" ", text)
+        return text
+    except Exception:
+        return text
+
+
 def _convert_inner(progid: str, src_copy: Path, html_out: Path, holder: dict, save_format: int) -> None:
     """Run the COM conversion on the worker thread. Records app for Quit."""
     try:
@@ -529,7 +558,10 @@ class OfficeBackend(Backend):
                         html_text = "\n<hr>\n".join(parts)
                     try:
                         # Normalize to UTF-8 on disk so MarkItDown gets clean input.
-                        html_out.write_text(_normalize_meta_charset(html_text), encoding="utf-8")
+                        # _clean_word_html strips Word conditional blocks (supportLists
+                        # field codes leak into headings otherwise) and normalizes
+                        # NBSP to regular spaces (#32).
+                        html_out.write_text(_normalize_meta_charset(_clean_word_html(html_text)), encoding="utf-8")
                     except OSError as exc:
                         return ConvertResult(content="", metadata={}, success=False, error=str(exc))
 

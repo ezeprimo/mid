@@ -786,6 +786,71 @@ def test_resolve_frameset_sheets_skips_tabstrip_missing_and_traversal(tmp_path):
     assert _resolve_frameset_sheets(container, text) == [companion / "sheet001.html"]
 
 
+def test_clean_word_html_strips_support_lists_and_nbsp():
+    """Word list-number conditionals and NBSP are cleaned, headings intact (#32)."""
+    from mid.backends.office import _clean_word_html
+
+    raw = (
+        "<html><head><!--[if gte mso 9]><xml><o:OfficeDocumentSettings></o:OfficeDocumentSettings>"
+        "</xml><![endif]--></head><body>"
+        "<h1><![if !supportLists]><span><span style='mso-list:Ignore'>1.1.<span>&nbsp;</span>"
+        "</span></span><![endif]>Objetivo</h1>"
+        "<p>texto\u00a0\u00a0con&#160;ryas</p>"
+        "</body></html>"
+    )
+    cleaned = _clean_word_html(raw)
+    assert "supportLists" not in cleaned
+    assert "endif" not in cleaned.lower()
+    assert "OfficeDocumentSettings" not in cleaned
+    assert "Objetivo" in cleaned
+    assert "\u00a0" not in cleaned
+    assert "&nbsp;" not in cleaned.lower()
+    assert "texto con ryas" in cleaned
+
+
+def test_clean_word_html_never_raises():
+    from mid.backends.office import _clean_word_html
+
+    assert isinstance(_clean_word_html("plain, no markup"), str)
+
+
+def test_convert_word_support_lists_do_not_leak(tmp_path):
+    """End-to-end: conditional list numbering never reaches MarkItDown (#32)."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "in.doc"
+    src.write_text("x", encoding="utf-8")
+
+    def word_factory(progid):
+        app = MagicMock()
+
+        def _saveas(html_path, *args, **kwargs):
+            Path(html_path).write_text(
+                "<html><body><h1><![if !supportLists]><span>1.1.<span>&nbsp;</span></span>"
+                "<![endif]>Objetivo</h1></body></html>",
+                encoding="utf-8",
+            )
+
+        docs = MagicMock()
+        app.Documents.Open.return_value = docs
+        docs.SaveAs.side_effect = _saveas
+        return app
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", word_factory):
+            mock_md = MagicMock()
+
+            def _passthrough(p):
+                return MagicMock(success=True, content=Path(p).read_text(encoding="utf-8"), error=None)
+
+            mock_md.convert.side_effect = _passthrough
+            with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
+                r = office_mod.OfficeBackend().convert(src)
+    assert r.success is True
+    assert "Objetivo" in r.content
+    assert "supportLists" not in r.content
+
+
 def test_copy_exclusive_lock_maps_to_file_locked(tmp_path):
     """Exclusive lock on the pre-COM copy maps to file-locked, locale-independent (#BUG-2)."""
     import mid.backends.office as office_mod
