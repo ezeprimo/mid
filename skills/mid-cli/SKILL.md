@@ -1,10 +1,10 @@
 ---
 name: mid-cli
-description: "Trigger: mid, MarkItDown, convert document to markdown, .docx, .pdf, batch conversion. Use this skill when an agent needs to run or validate the mid CLI correctly."
-license: Apache-2.0
-metadata:
-  author: gentleman-programming
-  version: "2.0"
+  description: "Trigger: mid, MarkItDown, convert document to markdown, .docx, .pdf, batch conversion, legacy backends, LibreOffice backend, Docker legacy image. Use this skill when an agent needs to run or validate the mid CLI correctly."
+  license: Apache-2.0
+  metadata:
+    author: gentleman-programming
+    version: "2.1"
 ---
 
 # mid CLI
@@ -21,7 +21,8 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 - Check exit codes: 0 success, 1 conversion error, 2 argument error, 3 unsupported format.
 - If `mid` is not found on PATH, install via bootstrap installer.
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
-- Legacy Office formats `.doc`, `.xls`, and `.ppt` are intentionally rejected; report that users must migrate them first.
+- Legacy Office formats `.doc`, `.xls`, `.ppt` are rejected by default; convert them explicitly via a legacy backend (`--backend libreoffice`) instead of reporting them as unsupported.
+- Discover backends at runtime with `mid --list-backends` (2s never-raise probe); never assume which backends are available.
 - Exception: on Windows with the `office` backend available (`mid --list-backends` shows it), offer `mid convert <file> --backend office` for `.doc`/`.xls` instead of stopping. `.ppt` always stays migrate-first (v1 scope: Word/Excel only).
 
 ## Decision Gates
@@ -33,7 +34,8 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 | Batch directory conversion | `mid batch <input> -o <output> [--recursive --preserve\|--recursive --flatten]` |
 | Check supported formats | `mid --list-formats` |
 | Need inline help | `mid help <command>` |
-| Legacy `.doc/.xls/.ppt` input | Stop and explain the format is intentionally unsupported for conversion. If `mid --list-backends` shows `office` available, offer `mid convert <file> --backend office` for `.doc`/`.xls` (never `.ppt`); map exit 2 (unknown backend) and exit 3 (unavailable with reason). |
+| Legacy `.doc/.xls/.ppt` input | Convert via `mid convert <file> --backend libreoffice [-o <output>]`; on Windows with the `office` backend available, offer `mid convert <file> --backend office` for `.doc`/`.xls` (never `.ppt`); only stop as unsupported if the backend is unavailable (exit 3) and no Docker legacy image is usable. Map exit 2 (unknown backend) and exit 3 (unavailable with reason). |
+| No local LibreOffice but Docker available | Use the legacy image: `docker run --rm -v <host-dir>:/data mid:legacy convert --backend libreoffice /data/<file> -o /data/out.md` (host dir must be writable by container `USER mid`). |
 | Need to verify if update available / user asks about updates | Compare `mid --version` with latest via `fetch_latest_version()` or GitHub API; respect `MID_NO_UPDATE_CHECK` and TTY/CI guards; surface banner if newer. |
 
 ## Execution Steps
@@ -43,8 +45,16 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 3. For single file: `mid convert <file> [-o <output>] [--json]`
 4. For batch: `mid batch <dir> -o <outdir> [--recursive --preserve | --recursive --flatten]`
 5. Always verify a real conversion works (not just `--help`).
-6. Use exit codes to decide next action.
-7. If update verification is appropriate (user asks, long session, before recommending install) and not opted out, check latest version and surface banner if newer (see Update Checker).
+6. Use exit codes to decide next action (2 = unknown backend, 3 = unavailable backend or unsupported format).
+7. For legacy formats, prefer `--backend libreoffice` (local `soffice` on PATH or `MID_LIBREOFFICE_PATH`) or the `mid:legacy` Docker image; see Legacy Backends.
+8. If update verification is appropriate (user asks, long session, before recommending install) and not opted out, check latest version and surface banner if newer (see Update Checker).
+
+## Legacy Backends
+
+- `mid --list-backends` reports backend availability (`libreoffice: available/unavailable` with reason); probe is 2s, cached, never raises.
+- Local conversion: `mid convert <file> --backend libreoffice [-o <output>]` (needs headless `soffice` on PATH; overrides `MID_LIBREOFFICE_PATH`, `MID_LIBREOFFICE_TIMEOUT` default 30s, clamped 5..300).
+- Docker conversion (no local install): build `docker build -f docker/Dockerfile.legacy -t mid:legacy .`, then mount-convert as in Decision Gates; image is ~1 GB, `linux/amd64`, non-root `USER mid`.
+- Known limitation: on LibreOffice 7.4 the fixed backend filter converts `.doc` but yields empty output for `.xls`/`.ppt`; `.doc` is the representative smoke path.
 
 ## Update Checker
 
@@ -71,5 +81,6 @@ Return how `mid` was resolved (binary path from `which mid` or `where mid`, `mid
 
 ## References
 
-- `skills/mid-cli/references/usage.md` — canonical command patterns for installation, single-file, batch, and release usage.
-- `README.md` — public CLI usage, supported formats, and install flows.
+- `skills/mid-cli/references/usage.md` — canonical command patterns for installation, single-file, batch, legacy backends, Docker image, and release usage.
+- `README.md` — public CLI usage, supported formats, LibreOffice backend, and install flows.
+- `docker/README.md` — legacy image build/mount commands, version pins, resources, and host-dir permission notes.

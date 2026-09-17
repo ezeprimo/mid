@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Legacy backend framework (#12)**: shared `Backend` ABC + registry + local tool detection (2s cached never-raise probe) with `BackendAdapter` and engine/CLI seams; explicit selection via `mid convert --backend <name>` and `mid --list-backends`; exit `2` unknown backend, `3` unavailable backend
+- **LibreOffice backend for local legacy conversion (#13)**: headless `soffice` backend (`--convert-to "html:XHTML Writer File:UTF8"`, isolated temp dirs, 20 MB output cap, strict UTF-8) delegating the HTML intermediate to MarkItDown; `MID_LIBREOFFICE_PATH` / `MID_LIBREOFFICE_TIMEOUT` (default 30s, 5..300); converts `.doc` (representative; `.xls`/`.ppt` via same backend)
+- **Docker legacy image with LibreOffice (#14)**: `docker/Dockerfile.legacy` (Debian bookworm-slim, pinned LibreOffice 7.4.7 writer+calc+impress, non-root `USER mid`, ~1 GB, `linux/amd64`) with documented mount conversion, host-dir permission notes, and `docker-legacy.yml` CI (build + `.doc→.md` smoke, GHA cache, no registry push)
 - **Office backend (Windows-only, opt-in)**: `office` backend converting legacy `.doc`/`.xls` via installed Word/Excel COM automation (`DispatchEx`, never attaches to a running instance). Registered only on `win32`, explicit `--backend office` required, `pywin32` behind the `office-windows` extra, `MID_OFFICE_PATH`/`MID_OFFICE_TIMEOUT` configuration, PID-scoped orphan cleanup, exit `2`/`3` mapping, `docs/office-backend.md`, explicit `--backend` selection now probes opt-in backends (`is_available(refresh=True)` in CLI/engine)
 
 ### Fixed
