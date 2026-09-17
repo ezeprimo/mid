@@ -21,8 +21,8 @@ mid convert .\legacy\report.doc --backend office -o .\out\report.md
 
 ## Supported versions and licensing
 
-- Word/Excel 2016, 2019, 2021, and Microsoft 365 (Click-to-Run and MSI,
-  32-bit and 64-bit).
+- Word/Excel 2013 (15.0, validated on 64-bit MSI), 2016, 2019, 2021, and
+  Microsoft 365 (Click-to-Run and MSI, 32-bit and 64-bit).
 - Office is **customer-provided** — `mid` never bundles or licenses Office.
 - Requires the `office-windows` extra on Windows: `pip install "mid[office-windows]"`.
   `pywin32` is a lazy, Windows-only dependency and is never imported on
@@ -57,8 +57,9 @@ version. Only `available=True` results are cached.
 ## Limits
 
 - Input extensions: `.doc`, `.xls` only (v1).
-- HTML intermediate capped at 20 MB, strict UTF-8, then delegated to
-  `MarkItDownConverter`.
+- HTML intermediate capped at 20 MB, decoded with precedence *declared meta
+  charset → UTF-8 → windows-1252* (Excel saves legacy codepages), then
+  normalized back to UTF-8 on disk and delegated to `MarkItDownConverter`.
 - Headless/server sessions without an Office installation fail with an
   actionable `Office not detected` reason — no silent automation.
 
@@ -72,4 +73,5 @@ version. Only `available=True` results are cached.
 | `file locked — close Office` | File open elsewhere | Close Office and retry |
 | `Office busy — retry` | RPC server busy | Retry shortly |
 | `timed out after Ns (orphan cleaned up)` | Hung COM instance | Orphan was Quit + killed; retry |
+| `could not decode HTML output` | No codec (declared/UTF-8/windows-1252) decoded the HTML | Report with the file; conversion refused rather than mojibake |
 | exit `2` / `3` | Unknown / unavailable backend | Check `--list-backends` output |

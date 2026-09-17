@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Office backend (Windows-only, opt-in)**: `office` backend converting legacy `.doc`/`.xls` via installed Word/Excel COM automation (`DispatchEx`, never attaches to a running instance). Registered only on `win32`, explicit `--backend office` required, `pywin32` behind the `office-windows` extra, `MID_OFFICE_PATH`/`MID_OFFICE_TIMEOUT` configuration, PID-scoped orphan cleanup, exit `2`/`3` mapping, `docs/office-backend.md`, explicit `--backend` selection now probes opt-in backends (`is_available(refresh=True)` in CLI/engine)
 
+### Fixed
+
+- **Office backend Word compat (#28)**: dropped the `WithWindow` keyword from `Documents.Open` (no such parameter — Word 2013 rejected it); hidden mode stays enforced via `Visible = False`
+- **Office backend Excel encoding + orphans (#29)**: intermediate HTML now decodes with precedence declared meta charset → UTF-8 → windows-1252 and is normalized back to UTF-8; COM app wrapper is popped from the holder right after the worker joins with `gc.collect()` in `finally`, so no `EXCEL.EXE`/`WINWORD.EXE` stays alive nondeterministically
+- **Office backend env-dependent test (#30)**: exit-2/exit-3 CLI mapping now covered by an env-independent stub test; the real-backend assertions skip (or assert gate-pass) based on the live `probe()` instead of assuming Office is absent
+
 ## [0.2.0] — 2026-08-31
 
 ### Added

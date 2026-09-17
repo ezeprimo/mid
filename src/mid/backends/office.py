@@ -11,7 +11,9 @@ path — only ``taskkill`` with ``shell=False``.
 
 from __future__ import annotations
 
+import gc
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -182,6 +184,57 @@ def _map_error(exc: BaseException) -> str:
     return msg
 
 
+_META_CHARSET_RE = re.compile(rb"<meta\b[^>]*?charset\s*=\s*[\"']?\s*([\w\-.]+)", re.IGNORECASE)
+_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_META_CHARSET_VALUE_RE = re.compile(r"(charset\s*=\s*[\"']?)[\w\-.]+([\"']?)", re.IGNORECASE)
+
+
+def _detect_charset(raw: bytes) -> str | None:
+    """Detect the declared HTML charset from a meta tag. Never raises."""
+    try:
+        m = _META_CHARSET_RE.search(raw[:8192])
+        if not m:
+            return None
+        name = m.group(1).decode("ascii").strip().strip("\"'").lower()
+        return name or None
+    except Exception:
+        return None
+
+
+def _decode_html_bytes(raw: bytes) -> str:
+    """Decode Office-produced HTML.
+
+    Excel saves HTML in a legacy codepage (#29) while declaring it in a meta
+    tag, so strict UTF-8 mis-decodes it. Precedence: declared meta charset,
+    then UTF-8, then windows-1252. Raises UnicodeDecodeError/LookupError when
+    every codec fails.
+    """
+    declared = _detect_charset(raw)
+    candidates = ([declared] if declared else []) + ["utf-8", "windows-1252"]
+    ordered: list[str] = []
+    for codec in candidates:
+        if codec not in ordered:
+            ordered.append(codec)
+    last_exc: Exception | None = None
+    for codec in ordered:
+        try:
+            return raw.decode(codec)
+        except (UnicodeDecodeError, LookupError) as exc:
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    raise UnicodeDecodeError("utf-8", raw, 0, 1, "empty")
+
+
+def _normalize_meta_charset(text: str) -> str:
+    """Rewrite meta-tag charset declarations to utf-8 after normalization."""
+
+    def _fix_tag(match: re.Match) -> str:
+        return _META_CHARSET_VALUE_RE.sub(r"\1utf-8\2", match.group(0))
+
+    return _META_TAG_RE.sub(_fix_tag, text)
+
+
 def _convert_inner(progid: str, src_copy: Path, html_out: Path, holder: dict, save_format: int) -> None:
     """Run the COM conversion on the worker thread. Records app for Quit."""
     try:
@@ -220,11 +273,13 @@ def _convert_inner(progid: str, src_copy: Path, html_out: Path, holder: dict, sa
                     except Exception:
                         pass
             else:
+                # NOTE (#28): Documents.Open has no WithWindow parameter — Word 2013
+                # rejects the unknown kwarg. Hidden mode is already enforced via
+                # app.Visible = False above, which is supported on all versions.
                 docs = app.Documents.Open(
                     str(src_copy),
                     ReadOnly=True,
                     AddToRecentFiles=False,
-                    WithWindow=False,
                 )
                 try:
                     docs.SaveAs(str(html_out), FileFormat=save_format)
@@ -350,61 +405,80 @@ class OfficeBackend(Backend):
                 )
                 worker.start()
                 worker.join(timeout)
-                if worker.is_alive():
-                    # Hang: Quit, then PID-scoped kill fallback, tmp auto-removed.
-                    app = holder.get("app")
-                    if app is not None:
+                # Deterministic COM release (#29): pop the app out of the holder
+                # immediately. The stored wrapper plus traceback->frame cycles
+                # otherwise keep EXCEL.EXE/WINWORD.EXE alive nondeterministically
+                # (CoUninitialize already ran while wrappers were still alive).
+                # The finally below drains reference cycles synchronously so the
+                # Office process can exit before we return.
+                app = holder.pop("app", None)
+                try:
+                    if worker.is_alive():
+                        # Hang: Quit, then PID-scoped kill fallback, tmp auto-removed.
+                        if app is not None:
+                            try:
+                                app.Quit()
+                            except Exception:
+                                pass
                         try:
-                            app.Quit()
+                            _get_killer()(_resolve_pid(app, exe) if app is not None else exe)
                         except Exception:
                             pass
-                    try:
-                        _get_killer()(_resolve_pid(app, exe) if app is not None else exe)
-                    except Exception:
-                        pass
-                    return ConvertResult(
-                        content="",
-                        metadata={},
-                        success=False,
-                        error=f"conversion timed out after {timeout}s (orphan cleaned up)",
-                    )
-                if "error" in holder:
-                    return ConvertResult(content="", metadata={}, success=False, error=_map_error(holder["error"]))
-
-                try:
-                    size = html_out.stat().st_size
-                except OSError as exc:
-                    return ConvertResult(content="", metadata={}, success=False, error=str(exc))
-                if size > _MAX_HTML_BYTES:
-                    return ConvertResult(content="", metadata={}, success=False, error="output exceeds 20 MB limit")
-                if size == 0:
-                    return ConvertResult(content="", metadata={}, success=False, error="conversion produced empty output")
-                try:
-                    html_text = html_out.read_text(encoding="utf-8")
-                    _ = html_text.encode("utf-8")
-                except UnicodeDecodeError as exc:
-                    return ConvertResult(content="", metadata={}, success=False, error=str(exc))
-                except Exception as exc:
-                    return ConvertResult(content="", metadata={}, success=False, error=str(exc))
-
-                try:
-                    from mid.converters.markitdown import MarkitDownConverter
-                except Exception as exc:
-                    return ConvertResult(content="", metadata={}, success=False, error=str(exc))
-                try:
-                    md = MarkitDownConverter()
-                    md_result = md.convert(html_out)
-                    if not md_result.success:
                         return ConvertResult(
-                            content="", metadata={}, success=False, error=md_result.error or "delegation failed"
+                            content="",
+                            metadata={},
+                            success=False,
+                            error=f"conversion timed out after {timeout}s (orphan cleaned up)",
                         )
-                    return ConvertResult(
-                        content=md_result.content,
-                        metadata={"source": path.name, "format": ext.lstrip("."), "success": True},
-                        success=True,
-                        error=None,
-                    )
-                except Exception as exc:
-                    return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+                    if "error" in holder:
+                        return ConvertResult(content="", metadata={}, success=False, error=_map_error(holder["error"]))
+
+                    try:
+                        size = html_out.stat().st_size
+                    except OSError as exc:
+                        return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+                    if size > _MAX_HTML_BYTES:
+                        return ConvertResult(content="", metadata={}, success=False, error="output exceeds 20 MB limit")
+                    if size == 0:
+                        return ConvertResult(content="", metadata={}, success=False, error="conversion produced empty output")
+                    try:
+                        raw_html = html_out.read_bytes()
+                    except OSError as exc:
+                        return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+                    try:
+                        html_text = _decode_html_bytes(raw_html)
+                    except (UnicodeDecodeError, LookupError) as exc:
+                        return ConvertResult(
+                            content="", metadata={}, success=False, error=f"could not decode HTML output: {exc}"
+                        )
+                    try:
+                        # Normalize to UTF-8 on disk so MarkItDown gets clean input.
+                        html_out.write_text(_normalize_meta_charset(html_text), encoding="utf-8")
+                    except OSError as exc:
+                        return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+
+                    try:
+                        from mid.converters.markitdown import MarkitDownConverter
+                    except Exception as exc:
+                        return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+                    try:
+                        md = MarkitDownConverter()
+                        md_result = md.convert(html_out)
+                        if not md_result.success:
+                            return ConvertResult(
+                                content="", metadata={}, success=False, error=md_result.error or "delegation failed"
+                            )
+                        return ConvertResult(
+                            content=md_result.content,
+                            metadata={"source": path.name, "format": ext.lstrip("."), "success": True},
+                            success=True,
+                            error=None,
+                        )
+                    except Exception as exc:
+                        return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+                finally:
+                    holder.clear()
+                    del app
+                    gc.collect()
         except Exception as exc:  # never-raise outer
             return ConvertResult(content="", metadata={}, success=False, error=str(exc) or "conversion failed")

@@ -312,8 +312,8 @@ def test_explicit_office_selection_and_ambiguity(win32, com_stub, tmp_path):
                 pass
 
 
-def test_unknown_backend_exits_2_and_unavailable_exits_3(tmp_path, capsys):
-    """CLI maps unknown backend to exit 2, unavailable backend to exit 3."""
+def test_unknown_backend_exits_2(tmp_path, capsys):
+    """CLI maps unknown backend to exit 2."""
     import sys as _sys
 
     from mid.backends.registry import registry
@@ -331,16 +331,123 @@ def test_unknown_backend_exits_2_and_unavailable_exits_3(tmp_path, capsys):
             assert exc.value.code == 2
         err = capsys.readouterr().err
         assert "unknown backend" in err.lower()
+    finally:
+        registry.clear()
+        for b in original:
+            try:
+                registry.register(b)
+            except ValueError:
+                pass
 
-        from mid.backends import office as office_mod
 
-        registry.register(office_mod.OfficeBackend())
-        with patch.object(_sys, "argv", ["mid", "convert", str(f), "--backend", "office"]):
-            with pytest.raises(SystemExit) as exc2:
+def test_unavailable_stub_backend_exits_3(tmp_path, capsys):
+    """CLI maps an unavailable backend to exit 3 — deterministic, no Office needed (#30)."""
+    import sys as _sys
+    from datetime import datetime, timezone
+
+    from mid.backends.base import Availability, Backend
+    from mid.backends.registry import registry
+    from mid.models import ConvertResult
+
+    class UnavailableStub(Backend):
+        def __init__(self):
+            super().__init__()
+            self.name = "stub-office"
+            self.display_name = "stub-office"
+            self.supported_extensions = frozenset({".doc"})
+            self.required_tools = tuple()
+
+        def probe(self) -> Availability:
+            return Availability(
+                available=False,
+                version=None,
+                tool_path=None,
+                reason="Office not detected",
+                checked_at=datetime.now(timezone.utc),
+            )
+
+        def convert(self, path: Path) -> ConvertResult:
+            raise AssertionError("must not convert when unavailable")
+
+    original = list(registry.list_all())
+    registry.clear()
+    try:
+        f = tmp_path / "sample.doc"
+        f.write_text("x", encoding="utf-8")
+        registry.register(UnavailableStub())
+        from mid.cli import main
+
+        with patch.object(_sys, "argv", ["mid", "convert", str(f), "--backend", "stub-office"]):
+            with pytest.raises(SystemExit) as exc:
                 main()
-            assert exc2.value.code == 3
-        err2 = capsys.readouterr().err
-        assert "unavailable" in err2.lower()
+            assert exc.value.code == 3
+        err = capsys.readouterr().err
+        assert "unavailable" in err.lower()
+    finally:
+        registry.clear()
+        for b in original:
+            try:
+                registry.register(b)
+            except ValueError:
+                pass
+
+
+def test_office_absent_reports_unavailable_exit_3(tmp_path, capsys):
+    """Real backend: exit 3 only when Office is actually absent (#30)."""
+    import sys as _sys
+
+    from mid.backends import office as office_mod
+    from mid.backends.registry import registry
+
+    if office_mod.OfficeBackend().probe().available:
+        pytest.skip("Office present on this runner — absent-path not applicable")
+    original = list(registry.list_all())
+    registry.clear()
+    try:
+        f = tmp_path / "sample.doc"
+        f.write_text("x", encoding="utf-8")
+        registry.register(office_mod.OfficeBackend())
+        from mid.cli import main
+
+        with patch.object(_sys, "argv", ["mid", "convert", str(f), "--backend", "office"]):
+            with pytest.raises(SystemExit) as exc:
+                main()
+            assert exc.value.code == 3
+        err = capsys.readouterr().err
+        assert "unavailable" in err.lower()
+    finally:
+        registry.clear()
+        for b in original:
+            try:
+                registry.register(b)
+            except ValueError:
+                pass
+
+
+def test_office_present_passes_availability_gate(tmp_path, capsys):
+    """Real backend: when Office is present, explicit selection passes the gate (#30)."""
+    import sys as _sys
+
+    from mid.backends import office as office_mod
+    from mid.backends.registry import registry
+
+    if not office_mod.OfficeBackend().probe().available:
+        pytest.skip("Office absent on this runner — gate test not applicable")
+    original = list(registry.list_all())
+    registry.clear()
+    try:
+        f = tmp_path / "sample.doc"
+        f.write_text("x", encoding="utf-8")
+        registry.register(office_mod.OfficeBackend())
+        from mid.cli import main
+
+        # A dummy .doc may or may not convert, but it must NOT exit 3:
+        # availability was established by the probe above.
+        try:
+            with patch.object(_sys, "argv", ["mid", "convert", str(f), "--backend", "office"]):
+                main()
+        except SystemExit as exc:
+            assert exc.code != 3
     finally:
         registry.clear()
         for b in original:
@@ -408,6 +515,7 @@ def test_convert_hardened_open_and_cleanup(tmp_path):
     app.Documents.Open.assert_called_once()
     open_kwargs = app.Documents.Open.call_args.kwargs
     assert open_kwargs.get("ReadOnly") is True
+    assert "WithWindow" not in open_kwargs, "Documents.Open has no WithWindow param (Word 2013 rejects it, #28)"
     assert docs.SaveAs.call_count == 1
     assert docs.SaveAs.call_args.kwargs.get("FileFormat") == 8
     assert app.Workbooks.Open.call_count == 0
@@ -520,11 +628,13 @@ def test_convert_20mb_cap_and_strict_utf8(tmp_path):
                 assert r.success is False
                 assert "20 MB" in (r.error or "") or "exceeds" in (r.error or "").lower()
 
-    def bad_utf8_factory(progid):
+    def undecodable_factory(progid):
+        # 0x81/0x8D/0x8F/0x90/0x9D are undefined in windows-1252 AND invalid in
+        # utf-8 with no meta charset: every codec fails -> clean error (#29).
         app = MagicMock()
 
         def _saveas(html_path, *args, **kwargs):
-            Path(html_path).write_bytes(b"\xff\xfe invalid")
+            Path(html_path).write_bytes(b"\x81\x8d\x8f\x90\x9d no meta here")
 
         docs = MagicMock()
         app.Documents.Open.return_value = docs
@@ -532,10 +642,121 @@ def test_convert_20mb_cap_and_strict_utf8(tmp_path):
         return app
 
     with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", bad_utf8_factory):
+        with patch.object(office_mod, "_COM_FACTORY", undecodable_factory):
             r2 = office_mod.OfficeBackend().convert(src)
             assert r2.success is False
-            assert r2.error is not None
+            assert "could not decode" in (r2.error or "").lower()
+
+
+def test_decode_html_bytes_prefers_declared_charset():
+    """Excel legacy-codepage HTML decodes via its meta charset (#29)."""
+    from mid.backends.office import _decode_html_bytes, _detect_charset, _normalize_meta_charset
+
+    raw = (
+        '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
+        "</head><body><p>caf\xe9</p></body></html>"
+    ).encode("latin-1")
+    assert _detect_charset(raw) == "windows-1252"
+    assert "caf\u00e9" in _decode_html_bytes(raw)
+    normalized = _normalize_meta_charset(_decode_html_bytes(raw))
+    assert "caf\u00e9" in normalized
+    assert "windows-1252" not in normalized.lower()
+    assert "utf-8" in normalized.lower()
+
+
+def test_decode_html_bytes_undecodable_raises():
+    from mid.backends.office import _decode_html_bytes
+
+    with pytest.raises((UnicodeDecodeError, LookupError)):
+        _decode_html_bytes(b"\x81\x8d\x8f\x90\x9d no meta here")
+
+
+def test_convert_excel_legacy_encoding_succeeds(tmp_path):
+    """End-to-end with legacy-encoded Excel HTML: converts, normalizes to UTF-8 (#29)."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "in.xls"
+    src.write_text("x", encoding="utf-8")
+
+    def legacy_factory(progid):
+        app = MagicMock()
+
+        def _saveas(html_path, *args, **kwargs):
+            Path(html_path).write_bytes(
+                '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
+                "</head><body><p>caf\xe9</p></body></html>".encode("latin-1")
+            )
+
+        wb = MagicMock()
+        app.Workbooks.Open.return_value = wb
+        wb.SaveAs.side_effect = _saveas
+        return app
+
+    seen_paths = []
+    real_write_text = Path.write_text
+
+    def spy_write_text(self, *args, **kwargs):
+        if self.suffix == ".html":
+            seen_paths.append((self, args, kwargs))
+        return real_write_text(self, *args, **kwargs)
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", legacy_factory):
+            mock_md = MagicMock()
+            mock_md.convert.return_value = MagicMock(success=True, content="# ok", error=None)
+            with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
+                with patch.object(Path, "write_text", spy_write_text):
+                    r = office_mod.OfficeBackend().convert(src)
+    assert r.success is True
+    assert seen_paths, "normalized HTML must be written back as UTF-8"
+    written = seen_paths[0][1][0]
+    assert "caf\u00e9" in written
+    assert "windows-1252" not in written.lower()
+
+
+def test_convert_releases_app_reference_deterministically(tmp_path):
+    """convert() must not retain the COM app wrapper after return (#29 no-orphan)."""
+    import gc as _gc
+    import weakref
+
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "in.doc"
+    src.write_text("x", encoding="utf-8")
+    refs = []
+
+    class Doc:
+        def SaveAs(self, html_path, **kwargs):
+            Path(html_path).write_text("<html><body>hi</body></html>", encoding="utf-8")
+
+        def Close(self, *args):
+            pass
+
+    class Docs:
+        def Open(self, *args, **kwargs):
+            return Doc()
+
+    class FakeApp:
+        def __init__(self):
+            self.Documents = Docs()
+
+        def Quit(self):
+            pass
+
+    def factory(progid):
+        app = FakeApp()
+        refs.append(weakref.ref(app))
+        return app
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", factory):
+            mock_md = MagicMock()
+            mock_md.convert.return_value = MagicMock(success=True, content="# hi", error=None)
+            with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
+                r = office_mod.OfficeBackend().convert(src)
+    assert r.success is True
+    _gc.collect()
+    assert refs[0]() is None, "COM app wrapper retained after convert() — orphan risk (#29)"
 
 
 # --- OFFICE-05: error taxonomy --------------------------------------------------
