@@ -714,6 +714,116 @@ def test_convert_excel_legacy_encoding_succeeds(tmp_path):
     assert "windows-1252" not in written.lower()
 
 
+def test_convert_excel_frameset_resolves_sheet_content(tmp_path):
+    """Excel frameset container resolves to sheet files, not the placeholder (#BUG-1)."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "in.xls"
+    src.write_text("x", encoding="utf-8")
+
+    def frameset_factory(progid):
+        app = MagicMock()
+
+        def _saveas(html_path, *args, **kwargs):
+            html_path = Path(html_path)
+            companion = html_path.parent / f"{html_path.stem}_archivos"
+            companion.mkdir(exist_ok=True)
+            (companion / "sheet001.html").write_bytes(
+                '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
+                "</head><body><table><tr><td>Hello legacy spike xls</td></tr></table></body></html>"
+                .encode("latin-1")
+            )
+            (companion / "tabstrip.html").write_text("<html><body>tabs</body></html>", encoding="utf-8")
+            html_path.write_text(
+                '<html><head><meta name="Excel Workbook Frameset"></head><frameset>'
+                f'<frame src="{html_path.stem}_archivos/sheet001.html" name="frSheet">'
+                f'<frame src="{html_path.stem}_archivos/tabstrip.html" name="frTabs">'
+                "</frameset><noframes><body><p>Esta p\u00e1gina utiliza marcos.</p></body></noframes></html>",
+                encoding="utf-8",
+            )
+
+        wb = MagicMock()
+        app.Workbooks.Open.return_value = wb
+        wb.SaveAs.side_effect = _saveas
+        return app
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", frameset_factory):
+            mock_md = MagicMock()
+
+            def _passthrough(p):
+                return MagicMock(success=True, content=Path(p).read_text(encoding="utf-8"), error=None)
+
+            mock_md.convert.side_effect = _passthrough
+            with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
+                r = office_mod.OfficeBackend().convert(src)
+    assert r.success is True
+    assert "Hello legacy spike xls" in r.content
+    assert "marcos" not in r.content.lower()
+    assert "tabstrip" not in r.content.lower()
+
+
+def test_resolve_frameset_sheets_skips_tabstrip_missing_and_traversal(tmp_path):
+    """Frameset resolution: tabstrip/missing/non-html/traversal skipped, locale-free (#BUG-1)."""
+    from mid.backends.office import _resolve_frameset_sheets
+
+    container = tmp_path / "book.html"
+    assert _resolve_frameset_sheets(container, "plain, no marker") == []
+
+    companion = tmp_path / "book_archivos"
+    companion.mkdir()
+    (companion / "sheet001.html").write_text("<html>real</html>", encoding="utf-8")
+    (companion / "tabstrip.html").write_text("<html>tabs</html>", encoding="utf-8")
+    (companion / "notes.txt").write_text("not html", encoding="utf-8")
+    text = (
+        '<html><head><meta name="Excel Workbook Frameset"></head><frameset>'
+        '<frame src="book_archivos/sheet001.html" name="frSheet">'
+        '<frame src="book_archivos/tabstrip.html" name="frTabs">'
+        '<frame src="book_archivos/missing.html">'
+        '<frame src="../escape.html">'
+        '<frame src="book_archivos/notes.txt">'
+        "</frameset></html>"
+    )
+    assert _resolve_frameset_sheets(container, text) == [companion / "sheet001.html"]
+
+
+def test_copy_exclusive_lock_maps_to_file_locked(tmp_path):
+    """Exclusive lock on the pre-COM copy maps to file-locked, locale-independent (#BUG-2)."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "in.xls"
+    src.write_text("x", encoding="utf-8")
+
+    def locked_copy(*args, **kwargs):
+        exc = OSError(
+            "[WinError 32] El proceso no tiene acceso al archivo porque está siendo "
+            "utilizado por otro proceso"
+        )
+        exc.winerror = 32
+        raise exc
+
+    with patch.object(sys, "platform", "win32"):
+        with patch("shutil.copy2", side_effect=locked_copy):
+            with patch.object(office_mod, "_KILLER", MagicMock()) as mock_killer:
+                r = office_mod.OfficeBackend().convert(src)
+    assert r.success is False
+    assert "file locked" in (r.error or "").lower()
+    assert not mock_killer.called
+
+
+def test_map_error_winerror_codes():
+    """Numeric WinError codes map locale-independently (Spanish messages included)."""
+    from mid.backends.office import _map_error
+
+    for code in (32, 33):
+        exc = OSError("cualquier mensaje localizado")
+        exc.winerror = code
+        assert "file locked" in _map_error(exc).lower()
+    denied = OSError("Acceso denegado.")
+    denied.winerror = 5
+    assert "permission denied" in _map_error(denied).lower()
+
+
 def test_convert_releases_app_reference_deterministically(tmp_path):
     """convert() must not retain the COM app wrapper after return (#29 no-orphan)."""
     import gc as _gc

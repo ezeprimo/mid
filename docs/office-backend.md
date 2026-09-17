@@ -60,6 +60,13 @@ version. Only `available=True` results are cached.
 - HTML intermediate capped at 20 MB, decoded with precedence *declared meta
   charset → UTF-8 → windows-1252* (Excel saves legacy codepages), then
   normalized back to UTF-8 on disk and delegated to `MarkItDownConverter`.
+- Excel `xlHtml` output is a frameset container plus a companion directory
+  (locale-dependent suffix): the backend resolves the referenced sheet files
+  (tabstrip excluded, directory-contained) and converts their combined content,
+  never the "uses frames" placeholder.
+- Input is copied into the temp dir before COM opens it, so a file merely open
+  in Office (shared-read) still converts without attaching to the live instance;
+  an exclusively locked file fails fast with a mapped `file locked` error.
 - Headless/server sessions without an Office installation fail with an
   actionable `Office not detected` reason — no silent automation.
 

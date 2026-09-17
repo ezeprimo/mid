@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Office backend Word compat (#28)**: dropped the `WithWindow` keyword from `Documents.Open` (no such parameter — Word 2013 rejected it); hidden mode stays enforced via `Visible = False`
 - **Office backend Excel encoding + orphans (#29)**: intermediate HTML now decodes with precedence declared meta charset → UTF-8 → windows-1252 and is normalized back to UTF-8; COM app wrapper is popped from the holder right after the worker joins with `gc.collect()` in `finally`, so no `EXCEL.EXE`/`WINWORD.EXE` stays alive nondeterministically
 - **Office backend env-dependent test (#30)**: exit-2/exit-3 CLI mapping now covered by an env-independent stub test; the real-backend assertions skip (or assert gate-pass) based on the live `probe()` instead of assuming Office is absent
+- **Office backend Excel frameset (follow-up of #29)**: `xlHtml` containers now resolve the referenced sheet files from the companion directory (locale-independent, tabstrip excluded, directory-contained) and convert their combined content instead of the frameset placeholder
+- **Office backend lock taxonomy (follow-up of #29)**: numeric WinError 32/33/5 map to `file locked`/`permission denied` locale-independently (Spanish messages included); pre-COM copy failures route through `_map_error`
 
 ## [0.2.0] — 2026-08-31
 

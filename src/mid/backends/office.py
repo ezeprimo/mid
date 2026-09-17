@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
+from urllib.parse import unquote
 
 from mid.backends.base import Availability, Backend
 from mid.models import ConvertResult
@@ -176,6 +177,13 @@ def _map_error(exc: BaseException) -> str:
         msg = str(exc) or type(exc).__name__
     except Exception:
         return "conversion failed"
+    # Locale-independent lock detection: WinError messages are localized
+    # (e.g. Spanish WinError 32), so check the numeric code first (#BUG-2).
+    winerror = getattr(exc, "winerror", None)
+    if winerror in (32, 33):  # ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION
+        return f"file locked — close Office and retry: {msg}"
+    if winerror == 5:  # ERROR_ACCESS_DENIED
+        return f"permission denied — close Office and retry: {msg}"
     lowered = msg.lower()
     if "rpc_e_servercall_retrylater" in lowered or "call was rejected" in lowered or "busy" in lowered:
         return f"Office busy — retry: {msg}"
@@ -224,6 +232,51 @@ def _decode_html_bytes(raw: bytes) -> str:
     if last_exc is not None:
         raise last_exc
     raise UnicodeDecodeError("utf-8", raw, 0, 1, "empty")
+
+
+_FRAME_SRC_RE = re.compile(r'<frame\b[^>]*?\bsrc\s*=\s*["\']?\s*([^"\'\s>]+)', re.IGNORECASE)
+_TABSTRIP_RE = re.compile(r"tabstrip", re.IGNORECASE)
+
+
+def _resolve_frameset_sheets(container: Path, text: str) -> list[Path]:
+    """Resolve sheet files referenced by an Excel frameset container.
+
+    Excel's xlHtml (44) output is a container page plus a companion directory
+    whose suffix is locale-dependent (_files, _archivos, _fichiers, ...), so
+    frame ``src`` attributes are resolved relative to the container instead.
+    Tabstrip navigation, non-HTML targets, missing files, and anything
+    escaping the container directory are skipped. Returns [] when the page
+    is not an Excel frameset. Never raises.
+    """
+    try:
+        if "excel workbook frameset" not in text.lower():
+            return []
+        base = container.parent.resolve()
+    except Exception:
+        return []
+    sheets: list[Path] = []
+    try:
+        for match in _FRAME_SRC_RE.finditer(text):
+            src = unquote(match.group(1).strip())
+            if not src or _TABSTRIP_RE.search(src):
+                continue
+            try:
+                # resolve() first: relative_to is lexical, so ../escape
+                # would otherwise pass the containment check.
+                candidate = (base / src).resolve()
+                candidate.relative_to(base)
+            except (ValueError, OSError):
+                continue
+            if candidate.suffix.lower() not in (".html", ".htm"):
+                continue
+            try:
+                if candidate.is_file():
+                    sheets.append(candidate)
+            except OSError:
+                continue
+    except Exception:
+        return []
+    return list(dict.fromkeys(sheets))
 
 
 def _normalize_meta_charset(text: str) -> str:
@@ -392,9 +445,13 @@ class OfficeBackend(Backend):
                 tmp = Path(tmpdir)
                 tmp_input = tmp / path.name
                 try:
+                    # NOTE: the copy runs BEFORE COM opens anything, so a file
+                    # merely open in Office (shared-read) still converts — the
+                    # live instance is never attached to. Only an exclusive
+                    # lock fails here, mapped locale-independently (#BUG-2).
                     shutil.copy2(path, tmp_input)
                 except OSError as exc:
-                    return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+                    return ConvertResult(content="", metadata={}, success=False, error=_map_error(exc))
                 html_out = tmp / f"{path.stem}.html"
 
                 holder: dict = {}
@@ -451,6 +508,25 @@ class OfficeBackend(Backend):
                         return ConvertResult(
                             content="", metadata={}, success=False, error=f"could not decode HTML output: {exc}"
                         )
+                    # Excel xlHtml (44) writes a frameset container plus a
+                    # companion dir holding the real sheets (#BUG-1). Resolve
+                    # the referenced sheet files (still inside this tmp dir)
+                    # and convert their combined content instead of the
+                    # "uses frames" placeholder.
+                    sheets = _resolve_frameset_sheets(html_out, html_text)
+                    if sheets:
+                        parts: list[str] = []
+                        for sheet in sheets:
+                            try:
+                                parts.append(_decode_html_bytes(sheet.read_bytes()))
+                            except (UnicodeDecodeError, LookupError, OSError) as exc:
+                                return ConvertResult(
+                                    content="",
+                                    metadata={},
+                                    success=False,
+                                    error=f"could not decode sheet {sheet.name}: {exc}",
+                                )
+                        html_text = "\n<hr>\n".join(parts)
                     try:
                         # Normalize to UTF-8 on disk so MarkItDown gets clean input.
                         html_out.write_text(_normalize_meta_charset(html_text), encoding="utf-8")
