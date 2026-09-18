@@ -2,6 +2,8 @@
 
 Explicit opt-in backend that converts legacy Word/Excel files (`.doc`, `.xls`)
 through an installed copy of Microsoft Office on Windows, via COM automation.
+Each file is saved to a macro-free OOXML intermediate (`.docx`/`xlsx`) and
+then read by MarkItDown's native docx/xlsx reader — no HTML involved.
 It mirrors the LibreOffice backend structure and error model.
 
 > v1 scope: **Word/Excel only**. `.ppt` stays on the migrate-first path and
@@ -57,19 +59,35 @@ version. Only `available=True` results are cached.
 ## Limits
 
 - Input extensions: `.doc`, `.xls` only (v1).
-- HTML intermediate capped at 20 MB, decoded with precedence *declared meta
-  charset → UTF-8 → windows-1252* (Excel saves legacy codepages), then
-  normalized back to UTF-8 on disk and delegated to `MarkItDownConverter`.
-- Excel `xlHtml` output is a frameset container plus a companion directory
-  (locale-dependent suffix): the backend resolves the referenced sheet files
-  (tabstrip excluded, directory-contained) and converts their combined content,
-  never the "uses frames" placeholder.
+- SaveAs targets are macro-free OOXML: `12` (`wdFormatXMLDocument`, `.docx`)
+  and `51` (`xlOpenXMLWorkbook`, `.xlsx`). Both constants exist since Office
+  2007, so Office 2013 needs no fallback; `DisplayAlerts=0` suppresses
+  compatibility prompts. A macro-carrying source saves macro-stripped.
+  FileFormat `52` (`.xlsm`) is NOT a fallback — MarkItDown's XlsxConverter
+  only accepts the `.xlsx` extension, and the temp file must carry the real
+  OOXML suffix (MarkItDown dispatches on extension).
+- OOXML intermediate capped at 20 MB, then delegated to
+  `MarkitDownConverter`. MarkItDown's XlsxConverter reads every sheet
+  (`pd.read_excel(sheet_name=None)`) and emits one `## <name>` section per
+  sheet, so multi-sheet workbooks convert whole with no extra join step.
+- Output normalization (never raises, `.doc` passes through unchanged):
+  literal U+00A0 → regular space (horizontal runs collapsed, `\n` kept),
+  whole-cell `NaN` (case-insensitive, pipe-delimited — `financiero` is kept)
+  → empty cell, exact `Unnamed: N` headers → empty header cell with the
+  column count stable.
+- Merged-cell forward-fill (`.xls` path only, before MarkItDown, never
+  raises): each merged range's top-left value is repeated into every cell of
+  the range (horizontal + vertical) and the range unmerged, so every markdown
+  row is self-contained for AI readers (GFM has no colspan/rowspan; duplicated
+  headers surface as `Name`, `Name.1`). Only real merged ranges are filled —
+  spacer rows and genuinely empty cells stay empty (a blind pandas `ffill` was
+  rejected because it bleeds prior values into those rows). Missing `openpyxl`
+  falls back to the unfilled intermediate.
+- Word tables (`gridSpan`/`vMerge`) are NOT expanded yet — follow-up; `.doc`
+  output passes through unchanged.
 - Input is copied into the temp dir before COM opens it, so a file merely open
   in Office (shared-read) still converts without attaching to the live instance;
   an exclusively locked file fails fast with a mapped `file locked` error.
-- Word HTML is sanitized before MarkItDown: `[if ...]` conditional blocks
-  (list-number field codes leak into headings otherwise) are removed with their
-  inner content, and NBSP entities/literals become regular spaces.
 - Headless/server sessions without an Office installation fail with an
   actionable `Office not detected` reason — no silent automation.
 
@@ -83,5 +101,4 @@ version. Only `available=True` results are cached.
 | `file locked — close Office` | File open elsewhere | Close Office and retry |
 | `Office busy — retry` | RPC server busy | Retry shortly |
 | `timed out after Ns (orphan cleaned up)` | Hung COM instance | Orphan was Quit + killed; retry |
-| `could not decode HTML output` | No codec (declared/UTF-8/windows-1252) decoded the HTML | Report with the file; conversion refused rather than mojibake |
 | exit `2` / `3` | Unknown / unavailable backend | Check `--list-backends` output |
