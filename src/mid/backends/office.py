@@ -23,22 +23,31 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
-from urllib.parse import unquote
 
 from mid.backends.base import Availability, Backend
 from mid.models import ConvertResult
 
 #: v1 ProgIDs: Word + Excel only. PowerPoint deferred post-v1.
+#: SaveAs targets are macro-free OOXML, read natively by MarkItDown:
+#: 12 = wdFormatXMLDocument (*.docx), 51 = xlOpenXMLWorkbook (*.xlsx).
+#: Both constants exist since Office 2007, so Office 2013 needs no fallback.
+#: A macro-carrying source (.doc/.xls with VBA) saves macro-stripped under
+#: DisplayAlerts=0; FileFormat 52 (.xlsm) is NOT a fallback — MarkItDown's
+#: XlsxConverter only accepts the `.xlsx` extension.
 PROGIDS: dict[str, tuple[str, str, int]] = {
-    ".doc": ("Word.Application", "WINWORD.EXE", 8),
-    ".xls": ("Excel.Application", "EXCEL.EXE", 44),
+    ".doc": ("Word.Application", "WINWORD.EXE", 12),
+    ".xls": ("Excel.Application", "EXCEL.EXE", 51),
 }
+
+#: Intermediate extension per input extension. The temp file MUST carry the
+#: real OOXML suffix — MarkItDown dispatches on extension.
+_INTERMEDIATE_EXT: dict[str, str] = {".doc": ".docx", ".xls": ".xlsx"}
 
 #: Only these exes may ever appear in a kill fallback argv. Never a user path.
 _ALLOWED_EXES = frozenset({"WINWORD.EXE", "EXCEL.EXE"})
 
-#: 20 MB HTML cap shared with the LibreOffice tail.
-_MAX_HTML_BYTES = 20 * 1024 * 1024
+#: 20 MB intermediate cap shared with the LibreOffice tail.
+_MAX_OUTPUT_BYTES = 20 * 1024 * 1024
 
 #: Injectable seams for tests. ``None`` selects the real implementation.
 _COM_FACTORY = None
@@ -192,132 +201,88 @@ def _map_error(exc: BaseException) -> str:
     return msg
 
 
-_META_CHARSET_RE = re.compile(rb"<meta\b[^>]*?charset\s*=\s*[\"']?\s*([\w\-.]+)", re.IGNORECASE)
-_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
-_META_CHARSET_VALUE_RE = re.compile(r"(charset\s*=\s*[\"']?)[\w\-.]+([\"']?)", re.IGNORECASE)
-
-
-def _detect_charset(raw: bytes) -> str | None:
-    """Detect the declared HTML charset from a meta tag. Never raises."""
-    try:
-        m = _META_CHARSET_RE.search(raw[:8192])
-        if not m:
-            return None
-        name = m.group(1).decode("ascii").strip().strip("\"'").lower()
-        return name or None
-    except Exception:
-        return None
-
-
-def _decode_html_bytes(raw: bytes) -> str:
-    """Decode Office-produced HTML.
-
-    Excel saves HTML in a legacy codepage (#29) while declaring it in a meta
-    tag, so strict UTF-8 mis-decodes it. Precedence: declared meta charset,
-    then UTF-8, then windows-1252. Raises UnicodeDecodeError/LookupError when
-    every codec fails.
-    """
-    declared = _detect_charset(raw)
-    candidates = ([declared] if declared else []) + ["utf-8", "windows-1252"]
-    ordered: list[str] = []
-    for codec in candidates:
-        if codec not in ordered:
-            ordered.append(codec)
-    last_exc: Exception | None = None
-    for codec in ordered:
-        try:
-            return raw.decode(codec)
-        except (UnicodeDecodeError, LookupError) as exc:
-            last_exc = exc
-    if last_exc is not None:
-        raise last_exc
-    raise UnicodeDecodeError("utf-8", raw, 0, 1, "empty")
-
-
-_FRAME_SRC_RE = re.compile(r'<frame\b[^>]*?\bsrc\s*=\s*["\']?\s*([^"\'\s>]+)', re.IGNORECASE)
-_TABSTRIP_RE = re.compile(r"tabstrip", re.IGNORECASE)
-
-
-def _resolve_frameset_sheets(container: Path, text: str) -> list[Path]:
-    """Resolve sheet files referenced by an Excel frameset container.
-
-    Excel's xlHtml (44) output is a container page plus a companion directory
-    whose suffix is locale-dependent (_files, _archivos, _fichiers, ...), so
-    frame ``src`` attributes are resolved relative to the container instead.
-    Tabstrip navigation, non-HTML targets, missing files, and anything
-    escaping the container directory are skipped. Returns [] when the page
-    is not an Excel frameset. Never raises.
-    """
-    try:
-        if "excel workbook frameset" not in text.lower():
-            return []
-        base = container.parent.resolve()
-    except Exception:
-        return []
-    sheets: list[Path] = []
-    try:
-        for match in _FRAME_SRC_RE.finditer(text):
-            src = unquote(match.group(1).strip())
-            if not src or _TABSTRIP_RE.search(src):
-                continue
-            try:
-                # resolve() first: relative_to is lexical, so ../escape
-                # would otherwise pass the containment check.
-                candidate = (base / src).resolve()
-                candidate.relative_to(base)
-            except (ValueError, OSError):
-                continue
-            if candidate.suffix.lower() not in (".html", ".htm"):
-                continue
-            try:
-                if candidate.is_file():
-                    sheets.append(candidate)
-            except OSError:
-                continue
-    except Exception:
-        return []
-    return list(dict.fromkeys(sheets))
-
-
-def _normalize_meta_charset(text: str) -> str:
-    """Rewrite meta-tag charset declarations to utf-8 after normalization."""
-
-    def _fix_tag(match: re.Match) -> str:
-        return _META_CHARSET_VALUE_RE.sub(r"\1utf-8\2", match.group(0))
-
-    return _META_TAG_RE.sub(_fix_tag, text)
-
-
-# Word wraps list numbering in conditional blocks (e.g. <![if !supportLists]>)
-# whose marker text leaks through MarkItDown into headings (#32). Both the
-# downlevel-hidden (<!--...-->) and downlevel-revealed (<![...]>) forms are
-# removed WITH their inner content: inside supportLists conditionals there is
-# only auto-numbering/formatting spans, the paragraph text lives outside.
-_COND_HIDDEN_RE = re.compile(r"<!--\[if[^\]]*\]>.*?<!\[endif\]-->", re.IGNORECASE | re.DOTALL)
-_COND_REVEALED_RE = re.compile(r"<!\[if[^\]]*\]>.*?<!\[endif\]>", re.IGNORECASE | re.DOTALL)
-_NBSP_ENTITY_RE = re.compile(r"&(?:nbsp|#[0]*160|#[xX][0]*[aA]0);", re.IGNORECASE)
+#: Whole-cell ``NaN`` (pandas empty merged cells) in pipe context only, so
+#: legitimate words containing "nan" (e.g. ``financiero``) are untouched.
+_NAN_CELL_RE = re.compile(r"(?<=\|)\s*nan\s*(?=\|)", re.IGNORECASE)
+#: Pandas default header for blank columns. Case-sensitive by design: only
+#: the exact ``Unnamed: N`` artifact is blanked, never real header text.
+_UNNAMED_CELL_RE = re.compile(r"(?<=\|)\s*Unnamed:\s*\d+\s*(?=\|)")
+#: Collapse horizontal whitespace runs but preserve newlines.
 _MULTI_SPACE_RE = re.compile(r"[^\S\n]{2,}")
 
 
-def _clean_word_html(text: str) -> str:
-    """Strip Word conditional blocks and normalize NBSP before MarkItDown (#32).
+def _normalize_ooxml_markdown(text: str) -> str:
+    """Normalize OOXML-path markdown artifacts. Never raises.
 
-    Removes ``[if ...]`` conditional comments (hidden and revealed forms,
-    content included) and maps NBSP entities/literals to regular spaces,
-    collapsing horizontal runs. Never raises.
+    1. Literal U+00A0 → regular space, then collapse horizontal runs
+       (newlines preserved).
+    2. Whole-cell ``NaN`` (case-insensitive, pipe-delimited) → empty cell.
+       Substrings such as ``financiero`` are untouched.
+    3. Exact ``Unnamed: N`` header cells → empty cell, keeping the pipe
+       count (column alignment) stable.
+
+    Applies to the final markdown of both ``.doc`` and ``.xls`` paths;
+    ``.doc`` output is already clean so it passes through unchanged.
     """
     try:
-        text = _COND_HIDDEN_RE.sub("", text)
-        text = _COND_REVEALED_RE.sub("", text)
-        text = _NBSP_ENTITY_RE.sub(" ", text)
         text = text.replace("\u00a0", " ")
+        text = _NAN_CELL_RE.sub("", text)
+        text = _UNNAMED_CELL_RE.sub("", text)
         text = _MULTI_SPACE_RE.sub(" ", text)
         return text
     except Exception:
         return text
 
 
-def _convert_inner(progid: str, src_copy: Path, html_out: Path, holder: dict, save_format: int) -> None:
+def _expand_merged_cells(path: Path) -> None:
+    """Forward-fill Excel merged ranges so every row is self-contained. Never raises.
+
+    For each worksheet and each merged range, the top-left value is copied
+    into every cell of the range (horizontal and vertical), then the range is
+    unmerged so downstream readers (pandas ``read_excel`` via MarkItDown, which
+    reports non-top-left merged cells as ``NaN``) see the repeated value.
+    Only cells inside a real merged range are touched — genuinely empty cells
+    and all-empty spacer rows stay empty. A merged range whose top-left is
+    empty is a no-op. Runs BEFORE MarkItDown; the existing
+    :func:`_normalize_ooxml_markdown` still runs AFTER (no ``NaN`` /
+    ``Unnamed: N`` / NBSP may be reintroduced here — only stored values move).
+
+    Method note: the precise ``merged_cells`` mask is used instead of a blind
+    pandas ``ffill`` on both axes, which would bleed prior values into spacer
+    rows and unrelated blanks. If ``openpyxl`` is unavailable (or anything
+    fails), the file is left untouched and conversion falls back to the
+    pre-existing behavior.
+    """
+    try:
+        import openpyxl  # lazy so a missing extra never breaks convert
+
+        wb = openpyxl.load_workbook(path)
+        try:
+            for ws in wb.worksheets:
+                for rng in list(ws.merged_cells.ranges):
+                    top_value = ws.cell(row=rng.min_row, column=rng.min_col).value
+                    ws.unmerge_cells(str(rng))
+                    if top_value is None:
+                        continue
+                    for row in ws.iter_rows(
+                        min_row=rng.min_row,
+                        max_row=rng.max_row,
+                        min_col=rng.min_col,
+                        max_col=rng.max_col,
+                    ):
+                        for cell in row:
+                            cell.value = top_value
+            wb.save(path)
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _convert_inner(progid: str, src_copy: Path, out_path: Path, holder: dict, save_format: int) -> None:
     """Run the COM conversion on the worker thread. Records app for Quit."""
     try:
         try:
@@ -348,7 +313,7 @@ def _convert_inner(progid: str, src_copy: Path, html_out: Path, holder: dict, sa
                     AddToMru=False,
                 )
                 try:
-                    wb.SaveAs(str(html_out), FileFormat=save_format)
+                    wb.SaveAs(str(out_path), FileFormat=save_format)
                 finally:
                     try:
                         wb.Close(False)
@@ -364,7 +329,7 @@ def _convert_inner(progid: str, src_copy: Path, html_out: Path, holder: dict, sa
                     AddToRecentFiles=False,
                 )
                 try:
-                    docs.SaveAs(str(html_out), FileFormat=save_format)
+                    docs.SaveAs(str(out_path), FileFormat=save_format)
                 finally:
                     try:
                         docs.Close(0)
@@ -453,7 +418,18 @@ class OfficeBackend(Backend):
             )
 
     def convert(self, path: Path) -> ConvertResult:
-        """Convert via per-app DispatchEx -> HTML -> MarkItDown. Never raises."""
+        """Convert via per-app DispatchEx -> OOXML -> MarkItDown. Never raises.
+
+        ``.doc`` saves as ``.docx`` (12 = wdFormatXMLDocument), ``.xls`` as
+        ``.xlsx`` (51 = xlOpenXMLWorkbook); the intermediate is then read by
+        MarkItDown's native docx/xlsx reader — no HTML involved. MarkItDown's
+        XlsxConverter iterates every sheet (``## <name>`` heading per sheet),
+        so multi-sheet workbooks convert whole. On the ``.xls`` path merged
+        ranges are forward-filled first (top-left value repeated into every
+        merged cell, ranges unmerged) so each markdown row is self-contained
+        for AI readers; spacer rows stay empty. Final markdown is normalized
+        (NBSP → space, whole-cell NaN → empty, ``Unnamed: N`` → empty).
+        """
         try:
             if not path.is_file():
                 return ConvertResult(content="", metadata={}, success=False, error=f"file not found: {path}")
@@ -481,12 +457,12 @@ class OfficeBackend(Backend):
                     shutil.copy2(path, tmp_input)
                 except OSError as exc:
                     return ConvertResult(content="", metadata={}, success=False, error=_map_error(exc))
-                html_out = tmp / f"{path.stem}.html"
+                intermediate = tmp / f"{path.stem}{_INTERMEDIATE_EXT[ext]}"
 
                 holder: dict = {}
                 worker = threading.Thread(
                     target=_convert_inner,
-                    args=(progid, tmp_input, html_out, holder, save_format),
+                    args=(progid, tmp_input, intermediate, holder, save_format),
                     daemon=True,
                 )
                 worker.start()
@@ -520,64 +496,31 @@ class OfficeBackend(Backend):
                         return ConvertResult(content="", metadata={}, success=False, error=_map_error(holder["error"]))
 
                     try:
-                        size = html_out.stat().st_size
+                        size = intermediate.stat().st_size
                     except OSError as exc:
                         return ConvertResult(content="", metadata={}, success=False, error=str(exc))
-                    if size > _MAX_HTML_BYTES:
+                    if size > _MAX_OUTPUT_BYTES:
                         return ConvertResult(content="", metadata={}, success=False, error="output exceeds 20 MB limit")
                     if size == 0:
                         return ConvertResult(content="", metadata={}, success=False, error="conversion produced empty output")
                     try:
-                        raw_html = html_out.read_bytes()
-                    except OSError as exc:
-                        return ConvertResult(content="", metadata={}, success=False, error=str(exc))
-                    try:
-                        html_text = _decode_html_bytes(raw_html)
-                    except (UnicodeDecodeError, LookupError) as exc:
-                        return ConvertResult(
-                            content="", metadata={}, success=False, error=f"could not decode HTML output: {exc}"
-                        )
-                    # Excel xlHtml (44) writes a frameset container plus a
-                    # companion dir holding the real sheets (#BUG-1). Resolve
-                    # the referenced sheet files (still inside this tmp dir)
-                    # and convert their combined content instead of the
-                    # "uses frames" placeholder.
-                    sheets = _resolve_frameset_sheets(html_out, html_text)
-                    if sheets:
-                        parts: list[str] = []
-                        for sheet in sheets:
-                            try:
-                                parts.append(_decode_html_bytes(sheet.read_bytes()))
-                            except (UnicodeDecodeError, LookupError, OSError) as exc:
-                                return ConvertResult(
-                                    content="",
-                                    metadata={},
-                                    success=False,
-                                    error=f"could not decode sheet {sheet.name}: {exc}",
-                                )
-                        html_text = "\n<hr>\n".join(parts)
-                    try:
-                        # Normalize to UTF-8 on disk so MarkItDown gets clean input.
-                        # _clean_word_html strips Word conditional blocks (supportLists
-                        # field codes leak into headings otherwise) and normalizes
-                        # NBSP to regular spaces (#32).
-                        html_out.write_text(_normalize_meta_charset(_clean_word_html(html_text)), encoding="utf-8")
-                    except OSError as exc:
-                        return ConvertResult(content="", metadata={}, success=False, error=str(exc))
-
-                    try:
                         from mid.converters.markitdown import MarkitDownConverter
                     except Exception as exc:
                         return ConvertResult(content="", metadata={}, success=False, error=str(exc))
+                    if ext == ".xls":
+                        # AI-legibility: expand merged headers/cells into every
+                        # row before MarkItDown reads the sheet (never raises;
+                        # falls back to the unfilled intermediate on failure).
+                        _expand_merged_cells(intermediate)
                     try:
                         md = MarkitDownConverter()
-                        md_result = md.convert(html_out)
+                        md_result = md.convert(intermediate)
                         if not md_result.success:
                             return ConvertResult(
                                 content="", metadata={}, success=False, error=md_result.error or "delegation failed"
                             )
                         return ConvertResult(
-                            content=md_result.content,
+                            content=_normalize_ooxml_markdown(md_result.content),
                             metadata={"source": path.name, "format": ext.lstrip("."), "success": True},
                             success=True,
                             error=None,

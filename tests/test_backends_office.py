@@ -465,8 +465,12 @@ def _fake_word_app(allow):
     docs = MagicMock()
     app.Documents.Open.return_value = docs
 
-    def _saveas(html_path, *args, **kwargs):
-        Path(html_path).write_text("<html><body>hello</body></html>", encoding="utf-8")
+    def _saveas(out_path, *args, **kwargs):
+        from docx import Document
+
+        doc = Document()
+        doc.add_paragraph("hello")
+        doc.save(str(out_path))
 
     docs.SaveAs.side_effect = _saveas
     allow.append((app, docs))
@@ -478,8 +482,13 @@ def _fake_excel_app(allow):
     wb = MagicMock()
     app.Workbooks.Open.return_value = wb
 
-    def _saveas(html_path, *args, **kwargs):
-        Path(html_path).write_text("<html><body>hello</body></html>", encoding="utf-8")
+    def _saveas(out_path, *args, **kwargs):
+        from openpyxl import Workbook
+
+        book = Workbook()
+        book.active.title = "Data"
+        book.active["A1"] = "hello"
+        book.save(str(out_path))
 
     wb.SaveAs.side_effect = _saveas
     allow.append((app, wb))
@@ -517,15 +526,16 @@ def test_convert_hardened_open_and_cleanup(tmp_path):
     assert open_kwargs.get("ReadOnly") is True
     assert "WithWindow" not in open_kwargs, "Documents.Open has no WithWindow param (Word 2013 rejects it, #28)"
     assert docs.SaveAs.call_count == 1
-    assert docs.SaveAs.call_args.kwargs.get("FileFormat") == 8
+    assert docs.SaveAs.call_args.kwargs.get("FileFormat") == 12
+    assert str(docs.SaveAs.call_args[0][0]).endswith(".docx")
     assert app.Workbooks.Open.call_count == 0
     assert docs.Close.called
     assert app.Quit.called
     assert not mock_killer.called, "killer must not run on success"
 
 
-def test_convert_excel_uses_workbooks_and_html_format(tmp_path):
-    """Excel .xls uses Workbooks.Open/Close and SaveAs FileFormat 44."""
+def test_convert_excel_uses_workbooks_and_xlsx_format(tmp_path):
+    """Excel .xls uses Workbooks.Open/Close and SaveAs FileFormat 51 (.xlsx)."""
     import mid.backends.office as office_mod
 
     src = tmp_path / "in.xls"
@@ -552,7 +562,8 @@ def test_convert_excel_uses_workbooks_and_html_format(tmp_path):
     assert open_kwargs.get("ReadOnly") is True
     assert app.Documents.Open.call_count == 0
     assert wb.SaveAs.call_count == 1
-    assert wb.SaveAs.call_args.kwargs.get("FileFormat") == 44
+    assert wb.SaveAs.call_args.kwargs.get("FileFormat") == 51
+    assert str(wb.SaveAs.call_args[0][0]).endswith(".xlsx")
     assert wb.Close.call_count == 1
     close_args, close_kwargs = wb.Close.call_args
     assert (close_args and close_args[0] in (0, False)) or close_kwargs.get("SaveChanges") in (0, False)
@@ -604,7 +615,30 @@ def test_convert_ppt_deferred_to_legacy(tmp_path):
     assert "unsupported format" in (r.error or "").lower()
 
 
-def test_convert_20mb_cap_and_strict_utf8(tmp_path):
+def test_intermediate_format_constants():
+    """OOXML intermediate: .doc -> docx/12, .xls -> xlsx/51 (macro-free)."""
+    from mid.backends.office import _INTERMEDIATE_EXT, PROGIDS
+
+    assert PROGIDS[".doc"] == ("Word.Application", "WINWORD.EXE", 12)
+    assert PROGIDS[".xls"] == ("Excel.Application", "EXCEL.EXE", 51)
+    assert _INTERMEDIATE_EXT == {".doc": ".docx", ".xls": ".xlsx"}
+
+
+def test_html_helpers_removed():
+    """HTML-intermediate helpers are dead code after the OOXML switch."""
+    import mid.backends.office as office_mod
+
+    for name in (
+        "_decode_html_bytes",
+        "_detect_charset",
+        "_resolve_frameset_sheets",
+        "_normalize_meta_charset",
+        "_clean_word_html",
+    ):
+        assert not hasattr(office_mod, name), f"{name} must be removed"
+
+
+def test_convert_20mb_cap_on_intermediate(tmp_path):
     import mid.backends.office as office_mod
 
     src = tmp_path / "in.doc"
@@ -613,8 +647,8 @@ def test_convert_20mb_cap_and_strict_utf8(tmp_path):
     def big_factory(progid):
         app = MagicMock()
 
-        def _saveas(html_path, *args, **kwargs):
-            Path(html_path).write_bytes(b"x" * 100)
+        def _saveas(out_path, *args, **kwargs):
+            Path(out_path).write_bytes(b"x" * 100)
 
         docs = MagicMock()
         app.Documents.Open.return_value = docs
@@ -623,123 +657,57 @@ def test_convert_20mb_cap_and_strict_utf8(tmp_path):
 
     with patch.object(sys, "platform", "win32"):
         with patch.object(office_mod, "_COM_FACTORY", big_factory):
-            with patch("mid.backends.office._MAX_HTML_BYTES", 10):
+            with patch("mid.backends.office._MAX_OUTPUT_BYTES", 10):
                 r = office_mod.OfficeBackend().convert(src)
                 assert r.success is False
                 assert "20 MB" in (r.error or "") or "exceeds" in (r.error or "").lower()
 
-    def undecodable_factory(progid):
-        # 0x81/0x8D/0x8F/0x90/0x9D are undefined in windows-1252 AND invalid in
-        # utf-8 with no meta charset: every codec fails -> clean error (#29).
-        app = MagicMock()
 
-        def _saveas(html_path, *args, **kwargs):
-            Path(html_path).write_bytes(b"\x81\x8d\x8f\x90\x9d no meta here")
-
-        docs = MagicMock()
-        app.Documents.Open.return_value = docs
-        docs.SaveAs.side_effect = _saveas
-        return app
-
-    with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", undecodable_factory):
-            r2 = office_mod.OfficeBackend().convert(src)
-            assert r2.success is False
-            assert "could not decode" in (r2.error or "").lower()
-
-
-def test_decode_html_bytes_prefers_declared_charset():
-    """Excel legacy-codepage HTML decodes via its meta charset (#29)."""
-    from mid.backends.office import _decode_html_bytes, _detect_charset, _normalize_meta_charset
-
-    raw = (
-        '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
-        "</head><body><p>caf\xe9</p></body></html>"
-    ).encode("latin-1")
-    assert _detect_charset(raw) == "windows-1252"
-    assert "caf\u00e9" in _decode_html_bytes(raw)
-    normalized = _normalize_meta_charset(_decode_html_bytes(raw))
-    assert "caf\u00e9" in normalized
-    assert "windows-1252" not in normalized.lower()
-    assert "utf-8" in normalized.lower()
-
-
-def test_decode_html_bytes_undecodable_raises():
-    from mid.backends.office import _decode_html_bytes
-
-    with pytest.raises((UnicodeDecodeError, LookupError)):
-        _decode_html_bytes(b"\x81\x8d\x8f\x90\x9d no meta here")
-
-
-def test_convert_excel_legacy_encoding_succeeds(tmp_path):
-    """End-to-end with legacy-encoded Excel HTML: converts, normalizes to UTF-8 (#29)."""
+def test_convert_delegates_ooxml_path_to_markitdown(tmp_path):
+    """The OOXML intermediate path (not HTML) reaches MarkItDown."""
     import mid.backends.office as office_mod
 
-    src = tmp_path / "in.xls"
+    src = tmp_path / "in.doc"
     src.write_text("x", encoding="utf-8")
-
-    def legacy_factory(progid):
-        app = MagicMock()
-
-        def _saveas(html_path, *args, **kwargs):
-            Path(html_path).write_bytes(
-                '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
-                "</head><body><p>caf\xe9</p></body></html>".encode("latin-1")
-            )
-
-        wb = MagicMock()
-        app.Workbooks.Open.return_value = wb
-        wb.SaveAs.side_effect = _saveas
-        return app
-
-    seen_paths = []
-    real_write_text = Path.write_text
-
-    def spy_write_text(self, *args, **kwargs):
-        if self.suffix == ".html":
-            seen_paths.append((self, args, kwargs))
-        return real_write_text(self, *args, **kwargs)
-
+    seen = []
     with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", legacy_factory):
+        with patch.object(office_mod, "_COM_FACTORY", lambda progid: _fake_com_success(progid, seen)):
             mock_md = MagicMock()
             mock_md.convert.return_value = MagicMock(success=True, content="# ok", error=None)
             with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
-                with patch.object(Path, "write_text", spy_write_text):
-                    r = office_mod.OfficeBackend().convert(src)
+                r = office_mod.OfficeBackend().convert(src)
     assert r.success is True
-    assert seen_paths, "normalized HTML must be written back as UTF-8"
-    written = seen_paths[0][1][0]
-    assert "caf\u00e9" in written
-    assert "windows-1252" not in written.lower()
+    delegated = Path(mock_md.convert.call_args[0][0])
+    assert delegated.suffix == ".docx"
+    assert delegated.name == "in.docx"
 
 
-def test_convert_excel_frameset_resolves_sheet_content(tmp_path):
-    """Excel frameset container resolves to sheet files, not the placeholder (#BUG-1)."""
+def test_convert_multisheet_xlsx_all_sheets(tmp_path):
+    """End-to-end with the REAL MarkItDown reader: every sheet converts.
+
+    The fake COM layer writes a genuine 3-sheet .xlsx (as Excel SaveAs 51
+    would); the backend must delegate it untouched so MarkItDown emits one
+    ``## <name>`` section per sheet — no per-sheet join needed.
+    """
     import mid.backends.office as office_mod
 
     src = tmp_path / "in.xls"
     src.write_text("x", encoding="utf-8")
+    sheet_names = ["VersionHistory", "LibroBanco", "CUT"]
 
-    def frameset_factory(progid):
+    def multisheet_factory(progid):
+        from openpyxl import Workbook
+
         app = MagicMock()
 
-        def _saveas(html_path, *args, **kwargs):
-            html_path = Path(html_path)
-            companion = html_path.parent / f"{html_path.stem}_archivos"
-            companion.mkdir(exist_ok=True)
-            (companion / "sheet001.html").write_bytes(
-                '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
-                "</head><body><table><tr><td>Hello legacy spike xls</td></tr></table></body></html>".encode("latin-1")
-            )
-            (companion / "tabstrip.html").write_text("<html><body>tabs</body></html>", encoding="utf-8")
-            html_path.write_text(
-                '<html><head><meta name="Excel Workbook Frameset"></head><frameset>'
-                f'<frame src="{html_path.stem}_archivos/sheet001.html" name="frSheet">'
-                f'<frame src="{html_path.stem}_archivos/tabstrip.html" name="frTabs">'
-                "</frameset><noframes><body><p>Esta p\u00e1gina utiliza marcos.</p></body></noframes></html>",
-                encoding="utf-8",
-            )
+        def _saveas(out_path, *args, **kwargs):
+            book = Workbook()
+            book.active.title = sheet_names[0]
+            book.active["A1"] = "version"
+            for name in sheet_names[1:]:
+                ws = book.create_sheet(name)
+                ws["A1"] = f"content-{name}"
+            book.save(str(out_path))
 
         wb = MagicMock()
         app.Workbooks.Open.return_value = wb
@@ -747,89 +715,33 @@ def test_convert_excel_frameset_resolves_sheet_content(tmp_path):
         return app
 
     with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", frameset_factory):
-            mock_md = MagicMock()
-
-            def _passthrough(p):
-                return MagicMock(success=True, content=Path(p).read_text(encoding="utf-8"), error=None)
-
-            mock_md.convert.side_effect = _passthrough
-            with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
-                r = office_mod.OfficeBackend().convert(src)
+        with patch.object(office_mod, "_COM_FACTORY", multisheet_factory):
+            r = office_mod.OfficeBackend().convert(src)
     assert r.success is True
-    assert "Hello legacy spike xls" in r.content
-    assert "marcos" not in r.content.lower()
-    assert "tabstrip" not in r.content.lower()
+    for name in sheet_names:
+        assert name in r.content, f"sheet {name} missing from output"
+    assert r.content.count("## ") >= 3
+    assert "content-LibroBanco" in r.content
+    assert "content-CUT" in r.content
 
 
-def test_resolve_frameset_sheets_skips_tabstrip_missing_and_traversal(tmp_path):
-    """Frameset resolution: tabstrip/missing/non-html/traversal skipped, locale-free (#BUG-1)."""
-    from mid.backends.office import _resolve_frameset_sheets
-
-    container = tmp_path / "book.html"
-    assert _resolve_frameset_sheets(container, "plain, no marker") == []
-
-    companion = tmp_path / "book_archivos"
-    companion.mkdir()
-    (companion / "sheet001.html").write_text("<html>real</html>", encoding="utf-8")
-    (companion / "tabstrip.html").write_text("<html>tabs</html>", encoding="utf-8")
-    (companion / "notes.txt").write_text("not html", encoding="utf-8")
-    text = (
-        '<html><head><meta name="Excel Workbook Frameset"></head><frameset>'
-        '<frame src="book_archivos/sheet001.html" name="frSheet">'
-        '<frame src="book_archivos/tabstrip.html" name="frTabs">'
-        '<frame src="book_archivos/missing.html">'
-        '<frame src="../escape.html">'
-        '<frame src="book_archivos/notes.txt">'
-        "</frameset></html>"
-    )
-    assert _resolve_frameset_sheets(container, text) == [companion / "sheet001.html"]
-
-
-def test_clean_word_html_strips_support_lists_and_nbsp():
-    """Word list-number conditionals and NBSP are cleaned, headings intact (#32)."""
-    from mid.backends.office import _clean_word_html
-
-    raw = (
-        "<html><head><!--[if gte mso 9]><xml><o:OfficeDocumentSettings></o:OfficeDocumentSettings>"
-        "</xml><![endif]--></head><body>"
-        "<h1><![if !supportLists]><span><span style='mso-list:Ignore'>1.1.<span>&nbsp;</span>"
-        "</span></span><![endif]>Objetivo</h1>"
-        "<p>texto\u00a0\u00a0con&#160;ryas</p>"
-        "</body></html>"
-    )
-    cleaned = _clean_word_html(raw)
-    assert "supportLists" not in cleaned
-    assert "endif" not in cleaned.lower()
-    assert "OfficeDocumentSettings" not in cleaned
-    assert "Objetivo" in cleaned
-    assert "\u00a0" not in cleaned
-    assert "&nbsp;" not in cleaned.lower()
-    assert "texto con ryas" in cleaned
-
-
-def test_clean_word_html_never_raises():
-    from mid.backends.office import _clean_word_html
-
-    assert isinstance(_clean_word_html("plain, no markup"), str)
-
-
-def test_convert_word_support_lists_do_not_leak(tmp_path):
-    """End-to-end: conditional list numbering never reaches MarkItDown (#32)."""
+def test_convert_docx_end_to_end_real_markitdown(tmp_path):
+    """End-to-end with the REAL MarkItDown reader: docx text flows through."""
     import mid.backends.office as office_mod
 
     src = tmp_path / "in.doc"
     src.write_text("x", encoding="utf-8")
 
-    def word_factory(progid):
+    def rich_doc_factory(progid):
+        from docx import Document
+
         app = MagicMock()
 
-        def _saveas(html_path, *args, **kwargs):
-            Path(html_path).write_text(
-                "<html><body><h1><![if !supportLists]><span>1.1.<span>&nbsp;</span></span>"
-                "<![endif]>Objetivo</h1></body></html>",
-                encoding="utf-8",
-            )
+        def _saveas(out_path, *args, **kwargs):
+            doc = Document()
+            doc.add_heading("Objetivo", level=1)
+            doc.add_paragraph("texto con ryas")
+            doc.save(str(out_path))
 
         docs = MagicMock()
         app.Documents.Open.return_value = docs
@@ -837,18 +749,13 @@ def test_convert_word_support_lists_do_not_leak(tmp_path):
         return app
 
     with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", word_factory):
-            mock_md = MagicMock()
-
-            def _passthrough(p):
-                return MagicMock(success=True, content=Path(p).read_text(encoding="utf-8"), error=None)
-
-            mock_md.convert.side_effect = _passthrough
-            with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
-                r = office_mod.OfficeBackend().convert(src)
+        with patch.object(office_mod, "_COM_FACTORY", rich_doc_factory):
+            r = office_mod.OfficeBackend().convert(src)
     assert r.success is True
     assert "Objetivo" in r.content
+    assert "texto con ryas" in r.content
     assert "supportLists" not in r.content
+    assert "\u00a0" not in r.content
 
 
 def test_copy_exclusive_lock_maps_to_file_locked(tmp_path):
@@ -967,6 +874,179 @@ def test_convert_on_linux_reports_platform(tmp_path):
         r = _backend().convert(p)
         assert r.success is False
         assert "unsupported platform" in (r.error or "").lower()
+
+
+# --- OOXML markdown normalization (NBSP + NaN + Unnamed) ------------------------
+
+
+def test_normalize_nbsp_to_space_and_collapse():
+    """Literal U+00A0 becomes a regular space; runs collapse, newlines kept."""
+    from mid.backends.office import _normalize_ooxml_markdown
+
+    out = _normalize_ooxml_markdown("a  b\nc  d")
+    assert " " not in out
+    assert out == "a b\nc d"
+
+
+def test_normalize_whole_cell_nan_only():
+    """Whole-cell NaN empties; words containing 'nan' (financiero) survive."""
+    from mid.backends.office import _normalize_ooxml_markdown
+
+    table = "| a | NaN | financiero |\n|---|---|---|\n| nan | NAN | medio de pago |"
+    out = _normalize_ooxml_markdown(table)
+    assert "financiero" in out
+    assert "medio de pago" in out
+    assert "NaN" not in out and "nan" not in out.replace("financiero", "")
+    # column count stable: every row keeps 3 cells
+    for line in out.splitlines():
+        assert line.count("|") == 4
+    # prose NaN without pipes is untouched
+    assert _normalize_ooxml_markdown("NaN values indicate gaps") == "NaN values indicate gaps"
+
+
+def test_normalize_unnamed_header_keeps_columns():
+    """Exact 'Unnamed: N' headers blank; pipe count (columns) unchanged."""
+    from mid.backends.office import _normalize_ooxml_markdown
+
+    header = "| Unnamed: 0 | Name | Unnamed: 12 |"
+    out = _normalize_ooxml_markdown(header)
+    assert "Unnamed" not in out
+    assert out.count("|") == header.count("|")
+    # real header text is never blanked
+    assert _normalize_ooxml_markdown("| Renamed: 3 | Name |") == "| Renamed: 3 | Name |"
+
+
+def test_normalize_never_raises():
+    """Normalizer is total: empty input passes through, never raises."""
+    from mid.backends.office import _normalize_ooxml_markdown
+
+    assert _normalize_ooxml_markdown("") == ""
+    assert isinstance(_normalize_ooxml_markdown("| a | NaN |\n"), str)
+
+
+# --- Merged-cell forward-fill (AI legibility) -------------------------------------
+
+
+def _make_merged_fixture(path: Path) -> Path:
+    """Matriz-like sheet: merged header zone + vertical merges + spacer row."""
+    from openpyxl import Workbook
+
+    book = Workbook()
+    ws = book.active
+    ws.title = "Banco"
+    ws["A1"] = "Transición"
+    ws.merge_cells("A1:A2")  # vertical header merge
+    ws["B1"] = "Condiciones"
+    ws.merge_cells("B1:C1")  # horizontal header merge
+    ws["D1"] = "Impactos"
+    ws.merge_cells("D1:E1")  # horizontal header merge
+    ws["B2"] = "Cond 1"
+    ws["C2"] = "Cond n"
+    ws["D2"] = "Código"
+    ws["E2"] = "Tipo"
+    ws["A3"] = "Confirmar"
+    ws.merge_cells("A3:A4")  # vertical body merge
+    ws["B3"] = "x1"
+    ws["C3"] = "y1"
+    ws["D3"] = "m1"
+    ws["E3"] = "t1"
+    ws["B4"] = "x2"
+    ws["C4"] = "y2"
+    ws["D4"] = "m2"
+    # E4 genuinely empty (never merged) — must NOT be filled.
+    # Row 5 all-empty spacer row (never merged) — must stay empty.
+    ws["A6"] = "Otro"
+    ws["B6"] = "z"
+    book.save(str(path))
+    return path
+
+
+def test_expand_merged_cells_horizontal_and_vertical(tmp_path):
+    """2x2-style merges fill both axes; real empties stay empty."""
+    from openpyxl import load_workbook
+
+    from mid.backends.office import _expand_merged_cells
+
+    p = _make_merged_fixture(tmp_path / "m.xlsx")
+    assert _expand_merged_cells(p) is None
+    ws = load_workbook(p)["Banco"]
+    assert list(ws.merged_cells.ranges) == []
+    # vertical fills
+    assert ws["A2"].value == "Transición"
+    assert ws["A4"].value == "Confirmar"
+    # horizontal fills
+    assert ws["C1"].value == "Condiciones"
+    assert ws["E1"].value == "Impactos"
+    # genuine empties untouched: spacer row + never-merged E4
+    assert ws["A5"].value is None and ws["C5"].value is None
+    assert ws["E4"].value is None
+
+
+def test_expand_merged_cells_never_raises(tmp_path):
+    """Missing file and missing openpyxl both fall back silently."""
+    import builtins
+
+    from mid.backends import office as office_mod
+
+    assert office_mod._expand_merged_cells(tmp_path / "missing.xlsx") is None
+    p = _make_merged_fixture(tmp_path / "m.xlsx")
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "openpyxl":
+            raise ImportError("No module named openpyxl")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", fake_import):
+        assert office_mod._expand_merged_cells(p) is None
+    # fallback left the merges untouched
+    from openpyxl import load_workbook
+
+    assert len(list(load_workbook(p)["Banco"].merged_cells.ranges)) == 4
+
+
+def test_convert_xls_merged_headers_forward_filled(tmp_path):
+    """End-to-end with the REAL MarkItDown reader: merged fixture has no gaps.
+
+    The fake COM layer copies a merged xlsx as the intermediate (as Excel
+    SaveAs 51 preserving merges would); every output row must be
+    self-contained while the spacer row stays empty.
+    """
+    import re
+
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "in.xls"
+    src.write_text("x", encoding="utf-8")
+    fixture = _make_merged_fixture(tmp_path / "fixture.xlsx")
+
+    def merged_factory(progid):
+        import shutil
+
+        app = MagicMock()
+
+        def _saveas(out_path, *args, **kwargs):
+            shutil.copy2(fixture, out_path)
+
+        wb = MagicMock()
+        app.Workbooks.Open.return_value = wb
+        wb.SaveAs.side_effect = _saveas
+        return app
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", merged_factory):
+            r = office_mod.OfficeBackend().convert(src)
+    assert r.success is True
+    assert "Unnamed" not in r.content
+    assert not re.search(r"(?<=\|)\s*nan\s*(?=\|)", r.content, re.IGNORECASE)
+    # forward-filled values repeat on every row they span
+    assert r.content.count("Transición") >= 2
+    assert r.content.count("Confirmar") >= 2
+    # header row has no empty cells (pandas dedupes repeats as Name.1)
+    header = next(line for line in r.content.splitlines() if "Condiciones" in line and "Cond 1" not in line)
+    assert "||" not in header.replace(" ", "")
+    # spacer row stays an all-empty separator, never filled with prior values
+    assert any(re.fullmatch(r"[|\s]+", line) and line.count("|") >= 6 for line in r.content.splitlines())
 
 
 # --- OFFICE-06: integration gate -------------------------------------------------

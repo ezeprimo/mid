@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Office backend OOXML intermediate**: `.doc`/`.xls` now save via COM as macro-free `.docx` (`wdFormatXMLDocument`, 12) / `.xlsx` (`xlOpenXMLWorkbook`, 51) and delegate to MarkItDown's native docx/xlsx reader instead of the HTML intermediate. HTML-only helpers (`_decode_html_bytes`, `_resolve_frameset_sheets`, `_clean_word_html`, meta-charset normalize) removed; 20 MB cap now applies to the OOXML intermediate. Multi-sheet workbooks convert whole (one `## <name>` section per sheet, no join step needed)
+
 ### Fixed
 
+- **Office backend merged-cell forward-fill**: on the `.xls` path each merged range's top-left value is repeated into every cell (horizontal + vertical) before MarkItDown, so markdown rows are self-contained for AI readers instead of `||` gaps; only real merged ranges fill (spacer rows stay empty), normalization still runs after, never raises
+- **Office backend OOXML markdown normalization**: final markdown maps literal U+00A0 → space (runs collapsed, `\n` kept), whole-cell `NaN` → empty cell (substrings like `financiero` kept), exact `Unnamed: N` headers → empty cell with column count stable; never raises, `.doc` output unchanged
 - **Office backend Word HTML sanitizing (#32)**: strip `[if ...]` conditional blocks (list-number field codes leaked into headings) with inner content and normalize NBSP entities/literals to regular spaces before MarkItDown
 
 ### Added
