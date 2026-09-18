@@ -715,8 +715,9 @@ def test_convert_multisheet_xlsx_all_sheets(tmp_path):
         return app
 
     with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", multisheet_factory):
-            r = office_mod.OfficeBackend().convert(src)
+        with patch("shutil.which", return_value=None):
+            with patch.object(office_mod, "_COM_FACTORY", multisheet_factory):
+                r = office_mod.OfficeBackend().convert(src)
     assert r.success is True
     for name in sheet_names:
         assert name in r.content, f"sheet {name} missing from output"
@@ -749,8 +750,9 @@ def test_convert_docx_end_to_end_real_markitdown(tmp_path):
         return app
 
     with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", rich_doc_factory):
-            r = office_mod.OfficeBackend().convert(src)
+        with patch("shutil.which", return_value=None):
+            with patch.object(office_mod, "_COM_FACTORY", rich_doc_factory):
+                r = office_mod.OfficeBackend().convert(src)
     assert r.success is True
     assert "Objetivo" in r.content
     assert "texto con ryas" in r.content
@@ -1034,8 +1036,9 @@ def test_convert_xls_merged_headers_forward_filled(tmp_path):
         return app
 
     with patch.object(sys, "platform", "win32"):
-        with patch.object(office_mod, "_COM_FACTORY", merged_factory):
-            r = office_mod.OfficeBackend().convert(src)
+        with patch("shutil.which", return_value=None):
+            with patch.object(office_mod, "_COM_FACTORY", merged_factory):
+                r = office_mod.OfficeBackend().convert(src)
     assert r.success is True
     assert "Unnamed" not in r.content
     assert not re.search(r"(?<=\|)\s*nan\s*(?=\|)", r.content, re.IGNORECASE)
