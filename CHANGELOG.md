@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-19
+
 ### Changed
 
 - **Office backend OOXML intermediate**: `.doc`/`.xls` now save via COM as macro-free `.docx` (`wdFormatXMLDocument`, 12) / `.xlsx` (`xlOpenXMLWorkbook`, 51) and delegate to MarkItDown's native docx/xlsx reader instead of the HTML intermediate. HTML-only helpers (`_decode_html_bytes`, `_resolve_frameset_sheets`, `_clean_word_html`, meta-charset normalize) removed; 20 MB cap now applies to the OOXML intermediate. Multi-sheet workbooks convert whole (one `## <name>` section per sheet, no join step needed)
@@ -31,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Office backend env-dependent test (#30)**: exit-2/exit-3 CLI mapping now covered by an env-independent stub test; the real-backend assertions skip (or assert gate-pass) based on the live `probe()` instead of assuming Office is absent
 - **Office backend Excel frameset (follow-up of #29)**: `xlHtml` containers now resolve the referenced sheet files from the companion directory (locale-independent, tabstrip excluded, directory-contained) and convert their combined content instead of the frameset placeholder
 - **Office backend lock taxonomy (follow-up of #29)**: numeric WinError 32/33/5 map to `file locked`/`permission denied` locale-independently (Spanish messages included); pre-COM copy failures route through `_map_error`
+
+### Docs
+
+- **Agent skill 2.2**: `mid-cli` description now covers the Windows Office backend; References link `docs/office-backend.md` directly
+- **Backend scope notes**: README and skill usage state that `--backend` is `convert`-only (`batch` has no backend flag) and that `--backend office` covers `.doc`/`.xls` on Windows
 
 ## [0.2.0] — 2026-08-31
 
@@ -104,6 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project contact**: Set to `ezeprimo.ia@gmail.com` using GitHub noreply alias
 - **Repository prepared for public visibility**
 
-[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ezeprimo/mid/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/ezeprimo/mid/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/ezeprimo/mid/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ezeprimo/mid/releases/tag/v0.1.0
