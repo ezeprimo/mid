@@ -1,10 +1,10 @@
 ---
 name: mid-cli
-  description: "Trigger: mid, MarkItDown, convert document to markdown, .docx, .pdf, batch conversion, legacy backends, LibreOffice backend, Docker legacy image. Use this skill when an agent needs to run or validate the mid CLI correctly."
+  description: "Trigger: mid, MarkItDown, convert document to markdown, .docx, .pdf, batch conversion, legacy backends, LibreOffice backend, Office backend Windows, Docker legacy image. Use this skill when an agent needs to run or validate the mid CLI correctly."
   license: Apache-2.0
   metadata:
     author: gentleman-programming
-    version: "2.1"
+    version: "2.2"
 ---
 
 # mid CLI
@@ -82,5 +82,6 @@ Return how `mid` was resolved (binary path from `which mid` or `where mid`, `mid
 ## References
 
 - `skills/mid-cli/references/usage.md` — canonical command patterns for installation, single-file, batch, legacy backends, Docker image, and release usage.
-- `README.md` — public CLI usage, supported formats, LibreOffice backend, and install flows.
+- `README.md` — public CLI usage, supported formats, LibreOffice and Office backends, and install flows.
+- `docs/office-backend.md` — Windows-only Office COM backend detail (OOXML intermediate, env vars, limits, troubleshooting).
 - `docker/README.md` — legacy image build/mount commands, version pins, resources, and host-dir permission notes.

@@ -42,6 +42,7 @@ Flag constraints:
 - `--flatten` **requires** `--recursive` (error if used alone).
 - `--preserve` requires `--recursive` (error if used alone).
 - `-o / --output` is required for batch mode.
+- `--backend` is `convert`-only; `batch` has no backend flag — legacy files fail in batch mode, convert them individually (see below).
 
 ## Install from Release
 

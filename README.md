@@ -116,6 +116,8 @@ mid batch ./docs -o ./out
 mid batch ./docs -o ./out --recursive --preserve
 ```
 
+> Note: `mid batch` has no `--backend` flag — legacy files (`.doc`/`.xls`/`.ppt`) fail in batch mode with the migrate-first message. Convert them individually with `mid convert --backend <name>`.
+
 ## Supported formats
 
 ### Conversion formats
@@ -133,6 +135,7 @@ mid batch ./docs -o ./out --recursive --preserve
 
 Legacy Office formats are currently detected and rejected with a clear message to migrate to modern formats first.
 When a local LibreOffice is available, `mid --backend libreoffice` can convert them (see LibreOffice backend below).
+On Windows with Microsoft Office installed, `mid convert --backend office` covers `.doc`/`.xls` (see Office backend below); `.ppt` stays migrate-first.
 
 > Real conversion capability depends on installed MarkItDown extras and system tools.
 > For this repo, `markitdown[all]` inside local `.venv` is the recommended setup.
