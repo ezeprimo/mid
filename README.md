@@ -1,5 +1,10 @@
 # mid
 
+[![CI](https://github.com/ezeprimo/mid/actions/workflows/ci.yml/badge.svg)](https://github.com/ezeprimo/mid/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ezeprimo/mid)](https://github.com/ezeprimo/mid/releases)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/github/license/ezeprimo/mid)](LICENSE)
+
 `mid` is a small CLI that converts documents to Markdown using Microsoft MarkItDown.
 It provides a consistent command surface for single-file and batch conversion workflows.
 
