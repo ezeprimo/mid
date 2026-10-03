@@ -12,6 +12,7 @@ path — only ``taskkill`` with ``shell=False``.
 from __future__ import annotations
 
 import gc
+import logging
 import os
 import re
 import shutil
@@ -26,6 +27,8 @@ from typing import ClassVar
 
 from mid.backends.base import Availability, Backend
 from mid.models import ConvertResult
+
+logger = logging.getLogger(__name__)
 
 #: v1 ProgIDs: Word + Excel only. PowerPoint deferred post-v1.
 #: SaveAs targets are macro-free OOXML, read natively by MarkItDown:
@@ -148,15 +151,20 @@ def _resolve_timeout() -> int:
     """Resolve convert timeout from MID_OFFICE_TIMEOUT, clamp 5..300 default 30."""
     raw = os.environ.get("MID_OFFICE_TIMEOUT")
     if raw is None:
+        logger.info("office timeout: default 30s")
         return 30
     try:
         val = int(raw)
     except (ValueError, TypeError):
+        logger.info("office timeout: invalid MID_OFFICE_TIMEOUT, using 30s")
         return 30
     if val < 5:
+        logger.info("office timeout: clamped to minimum 5s")
         return 5
     if val > 300:
+        logger.info("office timeout: clamped to maximum 300s")
         return 300
+    logger.info("office timeout: %ds", val)
     return val
 
 
@@ -365,6 +373,7 @@ class OfficeBackend(Backend):
         """Probe availability — never raises, completes within 2s."""
         start = time.monotonic()
         try:
+            logger.info("probing office backend")
             if sys.platform != "win32":
                 return Availability(
                     available=False,
@@ -374,6 +383,7 @@ class OfficeBackend(Backend):
                     checked_at=datetime.now(timezone.utc),
                 )
             tool_path, hint = _resolve_tool_path()
+            logger.debug("office tool path: %s", tool_path if tool_path else hint)
             if tool_path is None:
                 return Availability(
                     available=False,
@@ -401,6 +411,7 @@ class OfficeBackend(Backend):
                     checked_at=datetime.now(timezone.utc),
                 )
             version = _read_curver("Word.Application") or _read_curver("Excel.Application")
+            logger.debug("office version token: %s", version)
             return Availability(
                 available=True,
                 version=version,

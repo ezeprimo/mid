@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import shutil
 import subprocess
@@ -14,6 +15,8 @@ from typing import ClassVar
 from mid.backends.base import Availability, Backend
 from mid.backends.detection import run_version, which_tool
 from mid.models import ConvertResult
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_tool_path() -> tuple[Path | None, str | None]:
@@ -41,15 +44,20 @@ def _resolve_timeout() -> int:
     """Resolve convert timeout from MID_LIBREOFFICE_TIMEOUT, clamp 5..300 default 30."""
     raw = os.environ.get("MID_LIBREOFFICE_TIMEOUT")
     if raw is None:
+        logger.info("libreoffice timeout: default 30s")
         return 30
     try:
         val = int(raw)
     except (ValueError, TypeError):
+        logger.info("libreoffice timeout: invalid MID_LIBREOFFICE_TIMEOUT, using 30s")
         return 30
     if val < 5:
+        logger.info("libreoffice timeout: clamped to minimum 5s")
         return 5
     if val > 300:
+        logger.info("libreoffice timeout: clamped to maximum 300s")
         return 300
+    logger.info("libreoffice timeout: %ds", val)
     return val
 
 
@@ -93,7 +101,9 @@ class LibreOfficeBackend(Backend):
     def probe(self) -> Availability:
         """Probe availability — never raise, cache only True via base."""
         try:
+            logger.info("probing libreoffice backend")
             tool_path, hint = _resolve_tool_path()
+            logger.debug("libreoffice tool path: %s", tool_path if tool_path else hint)
             if tool_path is None:
                 return Availability(
                     available=False,
@@ -113,6 +123,7 @@ class LibreOfficeBackend(Backend):
                     reason="probe timed out",
                     checked_at=datetime.now(timezone.utc),
                 )
+            logger.debug("libreoffice version: %s", version)
             if version is None:
                 return Availability(
                     available=False,
