@@ -146,9 +146,7 @@ class TestHandlers:
         assert "DEBUG" in line
         assert "mid.test_format" in line
 
-    def test_log_file_writes_without_stdout_pollution(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
-    ) -> None:
+    def test_log_file_writes_without_stdout_pollution(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         target = tmp_path / "mid.log"
         setup_logging(verbose_count=2, log_file=str(target))
         logging.getLogger("mid.test_file").info("file-marker-123")
