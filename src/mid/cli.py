@@ -13,8 +13,13 @@ import json
 import sys
 from pathlib import Path
 
+import logging
+
 from mid import __version__
 from mid.engine import REGISTRY, convert_file, resolve_converter
+from mid.logging_setup import setup_logging
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Argument parser
@@ -44,6 +49,19 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="list available backends and exit",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=None,
+        help="increase log verbosity (repeat for more: -v INFO, -vv DEBUG); logs go to stderr",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        metavar="FILE",
+        help="write log records to FILE (in addition to stderr)",
+    )
 
     sub = parser.add_subparsers(dest="command", help="available commands")
 
@@ -53,6 +71,21 @@ def setup_parser() -> argparse.ArgumentParser:
     conv.add_argument("-o", "--output", help="write output to FILE instead of stdout")
     conv.add_argument("--json", action="store_true", help="emit JSON with metadata")
     conv.add_argument("--backend", help="backend to use for conversion")
+    conv.add_argument(
+        "-v",
+        "--verbose",
+        dest="verbose",
+        action="count",
+        default=argparse.SUPPRESS,
+        help="increase log verbosity (repeat for more: -v INFO, -vv DEBUG); logs go to stderr",
+    )
+    conv.add_argument(
+        "--log-file",
+        dest="log_file",
+        default=argparse.SUPPRESS,
+        metavar="FILE",
+        help="write log records to FILE (in addition to stderr)",
+    )
 
     # -- batch -------------------------------------------------------------
     bat = sub.add_parser("batch", help="convert all supported files in a directory")
@@ -61,6 +94,21 @@ def setup_parser() -> argparse.ArgumentParser:
     bat.add_argument("--recursive", action="store_true", help="process subdirectories")
     bat.add_argument("--flatten", action="store_true", help="flatten output structure (requires --recursive)")
     bat.add_argument("--preserve", action="store_true", help="preserve directory structure in output")
+    bat.add_argument(
+        "-v",
+        "--verbose",
+        dest="verbose",
+        action="count",
+        default=argparse.SUPPRESS,
+        help="increase log verbosity (repeat for more: -v INFO, -vv DEBUG); logs go to stderr",
+    )
+    bat.add_argument(
+        "--log-file",
+        dest="log_file",
+        default=argparse.SUPPRESS,
+        metavar="FILE",
+        help="write log records to FILE (in addition to stderr)",
+    )
 
     # -- help subcommand ---------------------------------------------------
     hp = sub.add_parser("help", help="show help for a command")
@@ -155,6 +203,7 @@ def handler_convert(args: argparse.Namespace) -> None:
 
     # THEN resolve converter (no backend flag — legacy path unchanged)
     ext = path.suffix.lower()
+    logger.info("converting %s (format %s)", path.name, ext or "<none>")
 
     if not ext:
         _exit_fmt("unsupported format (file has no extension)")
@@ -162,13 +211,20 @@ def handler_convert(args: argparse.Namespace) -> None:
     converter_cls = resolve_converter(ext)
 
     if converter_cls is None:
+        logger.info("unsupported format %s", ext)
         _exit_fmt(f"unsupported format {ext}")
 
     from mid.converters.legacy import LegacyPlaceholder
 
     converter = converter_cls()
+    logger.debug("resolved converter %s for %s", converter_cls.__name__, path.name)
     is_legacy = isinstance(converter, LegacyPlaceholder)
     result = converter.convert(path)
+    logger.info(
+        "conversion %s: %s",
+        "succeeded" if result.success else "failed",
+        path.name,
+    )
 
     if not result.success:
         msg = result.error or "unknown error"
@@ -360,6 +416,16 @@ def main() -> None:
     parser = setup_parser()
     try:
         args = parser.parse_args()
+
+        # Structured logging (issue 44): configure early so every stage
+        # below can emit. Subcommand flags already override globals via
+        # argparse; env fallback (MID_VERBOSE/MID_LOG_FILE) applies inside
+        # setup_logging when flags are absent. Uses getattr so
+        # --help/--version/--list-formats paths never crash.
+        setup_logging(
+            verbose_count=getattr(args, "verbose", None),
+            log_file=getattr(args, "log_file", None),
+        )
 
         # --list-formats is a top-level flag (no subcommand needed)
         if args.list_formats:

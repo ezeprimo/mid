@@ -123,6 +123,21 @@ mid batch ./docs -o ./out --recursive --preserve
 
 > Note: `mid batch` has no `--backend` flag — legacy files (`.doc`/`.xls`/`.ppt`) fail in batch mode with the migrate-first message. Convert them individually with `mid convert --backend <name>`.
 
+## Logging
+
+```bash
+# Show what mid is doing (detection, backend, conversion stages)
+mid convert ./docs/report.docx -v      # INFO
+mid convert ./docs/report.docx -vv     # DEBUG
+
+# Write logs to a file (in addition to stderr)
+mid convert ./docs/report.docx -vv --log-file ./mid.log
+```
+
+Log records go to **stderr only**, so stdout stays pure Markdown (or pure JSON with `--json`).
+The default level is `WARNING`; `-v` switches to `INFO`, `-vv` (or more) to `DEBUG`.
+When the flags are absent, the `MID_VERBOSE` (`0`/`1`/`2`) and `MID_LOG_FILE` environment variables apply.
+
 ## Supported formats
 
 ### Conversion formats

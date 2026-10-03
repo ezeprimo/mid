@@ -1,5 +1,6 @@
 """Converter that delegates to Microsoft MarkItDown."""
 
+import logging
 import re
 import warnings
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import ClassVar
 
 from mid.converters.base import Converter
 from mid.models import ConvertResult
+
+logger = logging.getLogger(__name__)
 
 
 class MarkitDownConverter(Converter):
@@ -157,6 +160,7 @@ class MarkitDownConverter(Converter):
             A ``ConvertResult`` with the markdown content on success
             or an error description on failure.
         """
+        logger.info("starting MarkItDown conversion: %s", path.name)
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*ffmpeg.*")
@@ -164,7 +168,16 @@ class MarkitDownConverter(Converter):
 
             md = MarkItDown()
             result = md.convert(str(path))
-            content = self._cleanup(result.text_content) if result else ""
+            raw = result.text_content if result else ""
+            logger.debug("raw MarkItDown output: %d chars for %s", len(raw), path.name)
+            content = self._cleanup(raw)
+            logger.debug(
+                "cleanup: %d -> %d chars for %s",
+                len(raw),
+                len(content),
+                path.name,
+            )
+            logger.info("finished MarkItDown conversion: %s", path.name)
 
             return ConvertResult(
                 content=content,
@@ -177,6 +190,7 @@ class MarkitDownConverter(Converter):
                 error=None,
             )
         except FileNotFoundError:
+            logger.debug("MarkItDown conversion file not found: %s", path.name)
             return ConvertResult(
                 content="",
                 metadata={},
@@ -184,6 +198,7 @@ class MarkitDownConverter(Converter):
                 error=f"File not found: {path.name}",
             )
         except Exception as exc:
+            logger.error("MarkItDown conversion failed for %s: %s", path.name, exc)
             return ConvertResult(
                 content="",
                 metadata={},
