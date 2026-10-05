@@ -138,6 +138,18 @@ Log records go to **stderr only**, so stdout stays pure Markdown (or pure JSON w
 The default level is `WARNING`; `-v` switches to `INFO`, `-vv` (or more) to `DEBUG`.
 When the flags are absent, the `MID_VERBOSE` (`0`/`1`/`2`) and `MID_LOG_FILE` environment variables apply.
 
+## Diagnostics
+
+```bash
+# Check the environment (Python, MarkItDown, ffmpeg, backends, cache/tmp, update connectivity)
+mid doctor
+mid doctor --json
+```
+
+`mid doctor` never crashes: every probe has a short timeout and failures become findings.
+Exit `0` when healthy, `1` when any finding (e.g. optional `ffmpeg` or LibreOffice missing).
+`--json` prints a pure-JSON payload (`ok`, `mid_version`, `python`, `checks`) to stdout.
+
 ## Supported formats
 
 ### Conversion formats
