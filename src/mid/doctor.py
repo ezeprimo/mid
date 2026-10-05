@@ -365,9 +365,7 @@ def run_checks() -> list[dict]:
     try:
         checks.extend(_check_backends())
     except Exception as exc:  # never-raise
-        checks.append(
-            {"name": "backends", "ok": False, "status": "fail", "detail": f"probe failed: {exc}"}
-        )
+        checks.append({"name": "backends", "ok": False, "status": "fail", "detail": f"probe failed: {exc}"})
     for fn in (_check_cache, _check_update):
         try:
             checks.append(fn())
