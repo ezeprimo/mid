@@ -110,6 +110,25 @@ def setup_parser() -> argparse.ArgumentParser:
         help="write log records to FILE (in addition to stderr)",
     )
 
+    # -- doctor ------------------------------------------------------------
+    doc = sub.add_parser("doctor", help="diagnose the mid environment")
+    doc.add_argument("--json", action="store_true", help="emit JSON diagnostics")
+    doc.add_argument(
+        "-v",
+        "--verbose",
+        dest="verbose",
+        action="count",
+        default=argparse.SUPPRESS,
+        help="increase log verbosity (repeat for more: -v INFO, -vv DEBUG); logs go to stderr",
+    )
+    doc.add_argument(
+        "--log-file",
+        dest="log_file",
+        default=argparse.SUPPRESS,
+        metavar="FILE",
+        help="write log records to FILE (in addition to stderr)",
+    )
+
     # -- help subcommand ---------------------------------------------------
     hp = sub.add_parser("help", help="show help for a command")
     hp.add_argument("topic", nargs="?", help="command to show help for")
@@ -467,6 +486,14 @@ def main() -> None:
             handler_convert(args)
         elif args.command == "batch":
             handler_batch(args)
+        elif args.command == "doctor":
+            try:
+                from mid.doctor import handler_doctor
+            except Exception as exc:
+                print(f"error: doctor unavailable: {exc}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                handler_doctor(args)
     finally:
         # Update checker: never alters exit codes, never writes to stdout, never raises
         try:
