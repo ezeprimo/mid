@@ -50,6 +50,24 @@ _INTERMEDIATE_EXT: dict[str, str] = {".doc": ".docx", ".xls": ".xlsx"}
 _ALLOWED_EXES = frozenset({"WINWORD.EXE", "EXCEL.EXE"})
 
 #: 20 MB intermediate cap shared with the LibreOffice tail.
+#: (module constant _MAX_OUTPUT_BYTES defined below)
+
+
+def _pywin32_missing_reason() -> str:
+    """Runnable guidance when pywin32 is absent — differs frozen vs source.
+
+    A frozen (PyInstaller) binary cannot be extended with pip, so telling its
+    user to ``pip install`` sends them in circles; name the binary situation
+    and the real exits instead. A source checkout can take the extra directly.
+    """
+    if getattr(sys, "frozen", False):
+        return (
+            "pywin32 not installed in this binary — the packaged binary ships "
+            "without the office backend and pip cannot extend it; on Windows "
+            "either install mid from source with pip install "
+            '"mid[office-windows]", or convert with --backend libreoffice'
+        )
+    return 'pywin32 not installed — pip install "mid[office-windows]" (Windows only)'
 _MAX_OUTPUT_BYTES = 20 * 1024 * 1024
 
 #: Injectable seams for tests. ``None`` selects the real implementation.
@@ -407,7 +425,7 @@ class OfficeBackend(Backend):
                     available=False,
                     version=None,
                     tool_path=str(tool_path),
-                    reason="pywin32 not installed — install the office-windows extra",
+                    reason=_pywin32_missing_reason(),
                     checked_at=datetime.now(timezone.utc),
                 )
             version = _read_curver("Word.Application") or _read_curver("Excel.Application")

@@ -253,6 +253,55 @@ def test_probe_needs_win32com(win32, tmp_path):
                     assert "pywin32" in (avail.reason or "").lower()
 
 
+def _probe_without_pywin32(office_mod, fake, monkeypatch):
+    """Run probe with win32com import blocked; returns Availability."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("win32com"):
+            raise ImportError("No module named win32com")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    return office_mod.OfficeBackend().probe()
+
+
+def test_probe_missing_pywin32_source_names_extra(win32, tmp_path, monkeypatch):
+    """Source checkout without pywin32 names the runnable pip fix."""
+    from mid.backends import office as office_mod
+
+    fake = tmp_path / "WINWORD.EXE"
+    fake.write_text("x")
+    monkeypatch.setenv("MID_OFFICE_PATH", str(fake))
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    with patch.object(office_mod, "_read_curver", return_value=None):
+        avail = _probe_without_pywin32(office_mod, fake, monkeypatch)
+        assert avail.available is False
+        reason = (avail.reason or "").lower()
+        assert "pywin32" in reason
+        assert "office-windows" in reason
+
+
+def test_probe_missing_pywin32_frozen_names_binary_path(win32, tmp_path, monkeypatch):
+    """Frozen binary without pywin32 names the binary situation, not the old fix."""
+    from mid.backends import office as office_mod
+
+    fake = tmp_path / "WINWORD.EXE"
+    fake.write_text("x")
+    monkeypatch.setenv("MID_OFFICE_PATH", str(fake))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    with patch.object(office_mod, "_read_curver", return_value=None):
+        avail = _probe_without_pywin32(office_mod, fake, monkeypatch)
+        assert avail.available is False
+        reason = (avail.reason or "").lower()
+        assert "pywin32" in reason
+        assert "binary" in reason
+        assert "libreoffice" in reason
+        assert "install the office-windows extra" not in reason
+
+
 def test_probe_never_raises(win32):
     from mid.backends import office as office_mod
 
