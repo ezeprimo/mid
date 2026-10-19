@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Diagnostic command `mid doctor` (#43)**: unified environment check — Python/version, MarkItDown, ffmpeg, backends (LibreOffice + opt-in Office probed), cache/tmp writability, update-checker connectivity. Human + `--json` output, exit 0 healthy / 1 findings, never raises.
+- **Structured logging (#44)**: `--verbose` (`-v` INFO, `-vv` DEBUG) and `--log-file`; logs go to stderr only so stdout stays pure Markdown/JSON. `MID_VERBOSE`/`MID_LOG_FILE` env fallback.
+
+### Fixed
+
+- **Office backend frozen-aware `pywin32` reason (#53)**: the packaged Windows binary ships without the office backend and pip cannot extend it, so the exit-3 reason no longer tells binary users to `pip install`. It names the binary situation with runnable exits (install mid from source with the `office-windows` extra, or convert with `--backend libreoffice`); source checkouts keep the pip fix.
+
+### Changed
+
+- **`office-windows` extra floor `pywin32>=310` (#53)**: build 306 predates the Python 3.12 crash fixes (309) and the `win32com.client` dispatch fixes (310/311) this backend relies on.
+- **Agent skill 2.3 (#52)**: Windows `office` discovery via `mid doctor` (`backend:office` ok). `--list-backends` never probes opt-in backends — listing is not consent to probe.
+
+### Docs
+
+- README status badges; Renovate config for automated dependency updates.
+
 ## [0.3.0] — 2026-09-19
 
 ### Changed
