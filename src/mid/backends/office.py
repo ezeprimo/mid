@@ -68,6 +68,8 @@ def _pywin32_missing_reason() -> str:
             '"mid[office-windows]", or convert with --backend libreoffice'
         )
     return 'pywin32 not installed — pip install "mid[office-windows]" (Windows only)'
+
+
 _MAX_OUTPUT_BYTES = 20 * 1024 * 1024
 
 #: Injectable seams for tests. ``None`` selects the real implementation.
