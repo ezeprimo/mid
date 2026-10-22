@@ -4,7 +4,7 @@ name: mid-cli
   license: Apache-2.0
   metadata:
     author: gentleman-programming
-    version: "2.2"
+    version: "2.3"
 ---
 
 # mid CLI
@@ -22,8 +22,8 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 - If `mid` is not found on PATH, install via bootstrap installer.
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Legacy Office formats `.doc`, `.xls`, `.ppt` are rejected by default; convert them explicitly via a legacy backend (`--backend libreoffice`) instead of reporting them as unsupported.
-- Discover backends at runtime with `mid --list-backends` (2s never-raise probe); never assume which backends are available.
-- Exception: on Windows with the `office` backend available (`mid --list-backends` shows it), offer `mid convert <file> --backend office` for `.doc`/`.xls` instead of stopping. `.ppt` always stays migrate-first (v1 scope: Word/Excel only).
+- Discover non-opt-in backends at runtime with `mid --list-backends` (2s never-raise probe); never assume which backends are available. The Windows `office` backend is opt-in: listing never probes it, so discover it with `mid doctor` instead (explicit probe, `backend:office` ok).
+- Exception: on Windows with the `office` backend available (`mid doctor` shows `backend:office` ok), offer `mid convert <file> --backend office` for `.doc`/`.xls` instead of stopping. `.ppt` always stays migrate-first (v1 scope: Word/Excel only).
 
 ## Decision Gates
 
@@ -34,7 +34,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 | Batch directory conversion | `mid batch <input> -o <output> [--recursive --preserve\|--recursive --flatten]` |
 | Check supported formats | `mid --list-formats` |
 | Need inline help | `mid help <command>` |
-| Legacy `.doc/.xls/.ppt` input | Convert via `mid convert <file> --backend libreoffice [-o <output>]`; on Windows with the `office` backend available, offer `mid convert <file> --backend office` for `.doc`/`.xls` (never `.ppt`); only stop as unsupported if the backend is unavailable (exit 3) and no Docker legacy image is usable. Map exit 2 (unknown backend) and exit 3 (unavailable with reason). |
+| Legacy `.doc/.xls/.ppt` input | Convert via `mid convert <file> --backend libreoffice [-o <output>]`; on Windows when `mid doctor` shows `backend:office` ok, offer `mid convert <file> --backend office` for `.doc`/`.xls` (never `.ppt`); only stop as unsupported if the backend is unavailable (exit 3) and no Docker legacy image is usable. Map exit 2 (unknown backend) and exit 3 (unavailable with reason). |
 | No local LibreOffice but Docker available | Use the legacy image: `docker run --rm -v <host-dir>:/data mid:legacy convert --backend libreoffice /data/<file> -o /data/out.md` (host dir must be writable by container `USER mid`). |
 | Need to verify if update available / user asks about updates | Compare `mid --version` with latest via `fetch_latest_version()` or GitHub API; respect `MID_NO_UPDATE_CHECK` and TTY/CI guards; surface banner if newer. |
 
@@ -51,7 +51,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 
 ## Legacy Backends
 
-- `mid --list-backends` reports backend availability (`libreoffice: available/unavailable` with reason); probe is 2s, cached, never raises.
+- `mid --list-backends` reports backend availability (`libreoffice: available/unavailable` with reason); probe is 2s, cached, never raises. Listing is never consent to probe: opt-in backends (Windows `office`) always report unavailable there — discover `office` with `mid doctor` (explicit probe, same doctrine as `convert --backend office`).
 - Local conversion: `mid convert <file> --backend libreoffice [-o <output>]` (needs headless `soffice` on PATH; overrides `MID_LIBREOFFICE_PATH`, `MID_LIBREOFFICE_TIMEOUT` default 30s, clamped 5..300).
 - Docker conversion (no local install): build `docker build -f docker/Dockerfile.legacy -t mid:legacy .`, then mount-convert as in Decision Gates; image is ~1 GB, `linux/amd64`, non-root `USER mid`.
 - Known limitation: on LibreOffice 7.4 the fixed backend filter converts `.doc` but yields empty output for `.xls`/`.ppt`; `.doc` is the representative smoke path.

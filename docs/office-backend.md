@@ -97,7 +97,8 @@ version. Only `available=True` results are cached.
 | --- | --- | --- |
 | `unsupported platform` | Non-Windows host | Use the LibreOffice backend or convert on Windows |
 | `Office not detected` | No App Paths entry / bad `MID_OFFICE_PATH` | Install Word/Excel or fix the env var |
-| `pywin32 not installed` | Missing extra | `pip install "mid[office-windows]"` |
+| `pywin32 not installed` (source checkout) | Missing extra | `pip install "mid[office-windows]"` |
+| `pywin32 not installed in this binary` | Packaged binary ships without the office backend (pip cannot extend it) | Install mid from source with `pip install "mid[office-windows]"`, or convert with `--backend libreoffice` |
 | `file locked — close Office` | File open elsewhere | Close Office and retry |
 | `Office busy — retry` | RPC server busy | Retry shortly |
 | `timed out after Ns (orphan cleaned up)` | Hung COM instance | Orphan was Quit + killed; retry |

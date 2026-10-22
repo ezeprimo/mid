@@ -49,7 +49,7 @@ rich = [
     "rich>=13.0",
 ]
 office-windows = [
-    "pywin32>=306; sys_platform=='win32'",
+    "pywin32>=310; sys_platform=='win32'",
 ]
 
 [tool.ruff]
