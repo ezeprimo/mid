@@ -359,3 +359,56 @@ class TestAdapter:
         b = FakeBackend(name="ada2")
         adapter = BackendAdapter(b)
         assert isinstance(adapter, Converter)
+
+
+class TestFrozenToolEnvironment:
+    """A frozen binary must not leak its loader paths to spawned tools (#65)."""
+
+    def test_run_version_strips_loader_variables_when_frozen(self, monkeypatch) -> None:
+        from mid.backends import detection
+
+        captured: dict[str, object] = {}
+
+        class _Result:
+            returncode = 0
+            stdout = "LibreOffice 7.6.0"
+            stderr = ""
+
+        def _fake_run(cmd, **kwargs):
+            captured["env"] = kwargs.get("env")
+            return _Result()
+
+        monkeypatch.setattr(detection.sys, "frozen", True, raising=False)
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEIabc")
+        monkeypatch.setenv("LD_PRELOAD", "/tmp/_MEIabc/libpre.so")
+        monkeypatch.setenv("PYTHONHOME", "/tmp/_MEIabc")
+        monkeypatch.setenv("PYTHONPATH", "/tmp/_MEIabc")
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setattr(detection.subprocess, "run", _fake_run)
+
+        version = detection.run_version(["/usr/bin/soffice", "--version"])
+
+        assert version == "7.6.0"
+        env = captured["env"]
+        assert isinstance(env, dict)
+        for leaked in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONHOME", "PYTHONPATH"):
+            assert leaked not in env, f"{leaked} must not reach a spawned tool"
+        assert env["PATH"] == "/usr/bin:/bin"
+
+    def test_run_version_keeps_the_user_environment_when_not_frozen(self, monkeypatch) -> None:
+        from mid.backends import detection
+
+        captured: dict[str, object] = {}
+
+        class _Result:
+            returncode = 0
+            stdout = "7.6.0"
+            stderr = ""
+
+        monkeypatch.setattr(detection.sys, "frozen", False, raising=False)
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/custom/lib")
+        monkeypatch.setattr(detection.subprocess, "run", lambda cmd, **kw: captured.update(kw) or _Result())
+
+        assert detection.run_version(["/usr/bin/soffice", "--version"]) == "7.6.0"
+        # A source install must respect a deliberate LD_LIBRARY_PATH.
+        assert captured.get("env") is None

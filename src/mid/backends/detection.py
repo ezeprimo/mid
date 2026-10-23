@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# PyInstaller exports LD_LIBRARY_PATH pointing at the onefile extraction dir, so
+# every child process inherits it. External tools then resolve their own
+# dependencies against the bundle's older copies (libcrypto.so.1.1 vs the host's
+# so.3, libffi.so.6 vs so.8) and abort at startup -- issue #65.
+_FROZEN_ENV_DROP = ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP")
+
+
+def tool_env() -> dict[str, str] | None:
+    """Environment for spawning external tools.
+
+    Returns ``None`` (inherit the caller's environment) for source installs, and
+    a scrubbed copy when frozen, so a probe or a backend sees the host's
+    libraries instead of the PyInstaller bundle's.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    return {key: value for key, value in os.environ.items() if key not in _FROZEN_ENV_DROP}
 
 
 def which_tool(name: str) -> Path | None:
@@ -24,7 +44,7 @@ def which_tool(name: str) -> Path | None:
 def run_version(cmd: list[str], pattern: str | None = None) -> str | None:
     """Run cmd and extract version string. Timeout 2s. May raise TimeoutExpired."""
     logger.debug("running version probe: %s", cmd[0] if cmd else "<empty>")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=2, env=tool_env())
     if result.returncode != 0:
         logger.info("version probe failed for %s (exit %d)", cmd[0] if cmd else "?", result.returncode)
         return None
