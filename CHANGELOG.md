@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux binary glibc floor (#57)**: `mid-linux-amd64` is now built with PyInstaller inside a `manylinux_2_28` container, so it requires glibc >= 2.28 instead of 2.38. Releases up to 0.4.0 were built on `ubuntu-latest` (Ubuntu 24.04) and aborted on Ubuntu 22.04 / Debian 12 with `version 'GLIBC_2.38' not found`.
+- **Release smoke runs on an older image**: the Linux smoke steps execute the binary inside `ubuntu:20.04` instead of the build runner, so a too-new glibc requirement fails CI instead of shipping.
+
 ## [0.4.0] — 2026-10-22
 
 ### Added

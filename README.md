@@ -65,6 +65,28 @@ python -m pip install --user "mid==1.2.3"
 - Update to latest stable: clear `MID_VERSION` and rerun the installer.
 - Rollback: set `MID_VERSION=vX.Y.Z` and rerun the same installer command.
 
+### Linux binary requirements
+
+The standalone `mid-linux-amd64` binary requires **glibc >= 2.28**. It is built
+with PyInstaller inside a `manylinux_2_28` container, so the glibc floor is
+pinned at build time instead of inherited from the CI runner image.
+
+| Distribution | glibc | Binary |
+| --- | --- | --- |
+| Debian 10+ / Ubuntu 20.04+ / Debian 12 / Ubuntu 22.04 / 24.04 | >= 2.28 | supported |
+| Older distributions (e.g. Ubuntu 18.04, CentOS 7) | < 2.28 | use the wheel or Docker image instead |
+
+If the binary fails with a loader error such as
+`version 'GLIBC_2.38' not found`, use one of these instead:
+
+```bash
+pipx install mid            # wheel: no glibc floor beyond your Python
+python -m pip install --user mid
+docker run --rm mid --version
+```
+
+Releases before `0.4.1` were built on `ubuntu-latest` and required glibc 2.38.
+
 ### Update checker
 
 `mid` shows a non-intrusive update banner on stderr when a newer release is available:
