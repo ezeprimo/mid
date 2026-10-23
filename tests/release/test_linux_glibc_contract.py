@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MANYLINUX_SCRIPT = REPO_ROOT / "scripts" / "build-linux-manylinux.sh"
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "build.sh"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 README = REPO_ROOT / "README.md"
 
 GLIBC_FLOOR = "2.28"
@@ -167,6 +168,15 @@ def test_release_workflow_smoke_uses_the_older_image_for_linux_binary() -> None:
     assert linux_smoke_steps, "Linux smoke steps must run the binary inside a container"
     for block in linux_smoke_steps:
         assert SMOKE_IMAGE in block, f"Linux smoke step is missing {SMOKE_IMAGE}"
+
+
+def test_ci_workflow_builds_the_linux_binary_before_release() -> None:
+    # release.yml only runs on tags, so the build path needs a pull-request
+    # guard; otherwise a broken build script ships unnoticed.
+    content = _read(CI_WORKFLOW)
+
+    assert "scripts/build-linux-manylinux.sh" in content
+    assert SMOKE_IMAGE in content
 
 
 def test_readme_documents_linux_binary_glibc_floor() -> None:
