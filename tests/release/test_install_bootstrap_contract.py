@@ -296,7 +296,11 @@ def test_linux_integrity_and_path_failure_guidance_is_executed(linux_release_har
     )
     assert integrity_fail.returncode != 0
     assert "SHA-256 mismatch for mid-linux-amd64" in integrity_fail.stderr
-    assert "pipx install --force 'mid==1.2.4'" in integrity_fail.stdout
+    # A blocked user must be pointed at this release's wheel: the project
+    # publishes no PyPI package, so `pipx install mid` resolves nothing.
+    assert "releases/download/v1.2.4/mid-1.2.4-py3-none-any.whl" in integrity_fail.stdout
+    assert "pipx install --force 'mid==1.2.4'" not in integrity_fail.stdout
+    assert "pip install --user 'mid==1.2.4'" not in integrity_fail.stdout
 
     path_guidance = _run_bash_script(
         bash,

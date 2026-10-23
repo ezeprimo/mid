@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $Repo = if ($env:MID_REPO) { $env:MID_REPO.Trim() } else { "ezeprimo/mid" }
 $ApiBase = if ($env:MID_API_BASE) { $env:MID_API_BASE.TrimEnd('/') } else { "https://api.github.com" }
 $RawBase = if ($env:MID_RAW_BASE) { $env:MID_RAW_BASE.TrimEnd('/') } else { "https://raw.githubusercontent.com" }
+$ReleasesBase = if ($env:MID_RELEASES_BASE) { $env:MID_RELEASES_BASE.TrimEnd('/') } else { "https://github.com" }
 $RequestedVersionRaw = if ($env:MID_VERSION) { $env:MID_VERSION.Trim() } else { "latest" }
 if (-not $RequestedVersionRaw) { $RequestedVersionRaw = "latest" }
 $AssetName = "mid-windows-amd64.exe"
@@ -32,10 +33,24 @@ function Get-ExpectedChecksum([string]$ChecksumsPath, [string]$RequiredAssetName
     }
     throw "checksums.txt is missing an entry for '$RequiredAssetName'."
 }
-function Write-NextSteps([string]$ResolvedTag, [string]$Repository, [string]$RawBaseUrl, [string]$Reason = "") {
+function Write-NextSteps([string]$ResolvedTag, [string]$Repository, [string]$RawBaseUrl, [string]$ReleasesBaseUrl, [string]$Reason = "") {
     $PackageVersion = $ResolvedTag.TrimStart("v")
     $InstallScriptUrl = "$RawBaseUrl/$Repository/$ResolvedTag/install.ps1"
-    if ($Reason) { Write-Warning "Binary install stopped: $Reason"; Write-Host ""; Write-Host "Fallback with the same version target ($ResolvedTag):"; Write-Host "  pipx install --force 'mid==$PackageVersion'"; Write-Host "  python -m pip install --user 'mid==$PackageVersion'"; Write-Host "" }
+    # The project publishes no PyPI package: installing by name resolves nothing,
+    # so a blocked user gets this release's wheel instead.
+    $WheelName = "mid-$PackageVersion-py3-none-any.whl"
+    $WheelUrl = "$ReleasesBaseUrl/$Repository/releases/download/$ResolvedTag/$WheelName"
+    if ($Reason) {
+        Write-Warning "Binary install stopped: $Reason"
+        Write-Host ""
+        Write-Host "Fallback with the same version target ($ResolvedTag):"
+        Write-Host "  This release attaches a pure-Python wheel with no binary and no glibc floor:"
+        Write-Host "    Invoke-WebRequest -Uri '$WheelUrl' -OutFile '$WheelName'"
+        Write-Host "    python -m pip install --user '.\$WheelName'"
+        Write-Host "  Or install it isolated with pipx:"
+        Write-Host "    pipx install '.\$WheelName'"
+        Write-Host ""
+    }
     Write-Host "Update to latest stable:"; Write-Host "  Remove-Item Env:MID_VERSION -ErrorAction SilentlyContinue"; Write-Host "  irm $InstallScriptUrl | iex"; Write-Host ""
     Write-Host "Rollback to a pinned version:"; Write-Host "  `$env:MID_VERSION = 'vX.Y.Z'"; Write-Host "  irm $InstallScriptUrl | iex"; Write-Host ""
     Write-Host "Uninstall with dedicated script (recommended):"; Write-Host "  irm $RawBaseUrl/$Repository/main/uninstall.ps1 | iex"; Write-Host ""; Write-Host "Phase-1 uninstall (manual fallback):"; Write-Host "  Remove-Item -LiteralPath '$TargetPath' -Force -ErrorAction SilentlyContinue"; Write-Host "  Remove user PATH entry '$InstallDir' if you no longer need it"
@@ -73,10 +88,10 @@ try {
     Invoke-WebRequest -Uri $checksumsUrl -OutFile $downloadedChecksums
     $expectedHash = Get-ExpectedChecksum -ChecksumsPath $downloadedChecksums -RequiredAssetName $AssetName
     $actualHash = (Get-FileHash -LiteralPath $downloadedBinary -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($expectedHash -ne $actualHash) { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -Reason "SHA-256 mismatch for $AssetName"; exit 1 }
+    if ($expectedHash -ne $actualHash) { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -ReleasesBaseUrl $ReleasesBase -Reason "SHA-256 mismatch for $AssetName"; exit 1 }
     if ($PSVersionTable.PSEdition -eq 'Core' -and ($IsLinux -or $IsMacOS)) { chmod +x $downloadedBinary }
-    try { $versionOutput = (& $downloadedBinary --version 2>&1 | Out-String) } catch { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -Reason "Binary smoke check failed (--version)."; exit 1 }
-    if (-not $versionOutput -or $versionOutput -notmatch $SmokePattern) { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -Reason "Unexpected binary output during smoke check."; exit 1 }
+    try { $versionOutput = (& $downloadedBinary --version 2>&1 | Out-String) } catch { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -ReleasesBaseUrl $ReleasesBase -Reason "Binary smoke check failed (--version)."; exit 1 }
+    if (-not $versionOutput -or $versionOutput -notmatch $SmokePattern) { Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -ReleasesBaseUrl $ReleasesBase -Reason "Unexpected binary output during smoke check."; exit 1 }
 
     Install-Atomically -DownloadedPath $downloadedBinary -FinalPath $TargetPath
     $pathResult = Ensure-UserPathContains -PathEntry $InstallDir
@@ -89,6 +104,6 @@ try {
     elseif ($pathResult -eq "already-present") { Write-Host "User PATH already contains $InstallDir. Open a new shell if command is not yet visible." }
     elseif ($pathResult -eq "disabled") { Write-Host "Persistent PATH update disabled via MID_DISABLE_PERSIST_PATH_UPDATE." }
     else { Write-Warning "Could not update user PATH automatically: $pathResult"; Write-Host "Add this path manually and open a new shell:"; Write-Host "  $InstallDir" }
-    Write-Host ""; Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase
+    Write-Host ""; Write-NextSteps -ResolvedTag $ResolvedTag -Repository $Repo -RawBaseUrl $RawBase -ReleasesBaseUrl $ReleasesBase
 }
 finally { if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue } }
