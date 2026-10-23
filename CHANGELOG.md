@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Linux binary glibc floor (#57)**: `mid-linux-amd64` is now built with PyInstaller inside a `manylinux_2_28` container, so it requires glibc >= 2.28 instead of 2.38. Releases up to 0.4.0 were built on `ubuntu-latest` (Ubuntu 24.04) and aborted on Ubuntu 22.04 / Debian 12 with `version 'GLIBC_2.38' not found`.
 - **Release smoke runs on an older image**: the Linux smoke steps execute the binary inside `ubuntu:20.04` instead of the build runner, so a too-new glibc requirement fails CI instead of shipping.
+- **Floor proven by a real conversion (#57)**: CI converts a real `.docx` on `rockylinux:8` (glibc 2.28) — the documented floor — and the release smoke runs the binary on `ubuntu:20.04` (glibc 2.31); both images differ from the `manylinux_2_28` build container, so a too-new glibc requirement fails CI instead of shipping.
+- **Manylinux build image pinned by digest (#57)**: `scripts/build-linux-manylinux.sh` references `quay.io/pypa/manylinux_2_28_x86_64@sha256:...`, so a release cannot silently change its toolchain or dependency resolution through an upstream retag.
+
+### Docs
+
+- **README Linux binary scope (#57)**: the Linux binary section states the platform scope (x86_64 + glibc only, no arm64/aarch64 or musl/Alpine) and points a blocked user at channels the project publishes — the wheel attached to the GitHub release or a locally built `docker/Dockerfile` image — instead of names this project does not publish.
 
 ## [0.4.0] — 2026-10-22
 

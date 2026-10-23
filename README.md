@@ -68,24 +68,45 @@ python -m pip install --user "mid==1.2.3"
 ### Linux binary requirements
 
 The standalone `mid-linux-amd64` binary requires **glibc >= 2.28**. It is built
-with PyInstaller inside a `manylinux_2_28` container, so the glibc floor is
-pinned at build time instead of inherited from the CI runner image.
+with PyInstaller inside a `manylinux_2_28` container pinned by image digest
+(`quay.io/pypa/manylinux_2_28_x86_64@sha256:...`), so the glibc floor is fixed
+at build time instead of being inherited from a mutable CI runner image or
+from an upstream retag.
+
+Platform scope: x86_64 Linux with glibc only. `mid-linux-amd64` is a single
+x86_64 build — there is no arm64/aarch64 binary, and musl-based distributions
+such as Alpine are not supported because the binary links against glibc.
 
 | Distribution | glibc | Binary |
 | --- | --- | --- |
-| Debian 10+ / Ubuntu 20.04+ / Debian 12 / Ubuntu 22.04 / 24.04 | >= 2.28 | supported |
-| Older distributions (e.g. Ubuntu 18.04, CentOS 7) | < 2.28 | use the wheel or Docker image instead |
+| Debian 10+ and Ubuntu 20.04+ (e.g. Debian 12, Ubuntu 22.04, Ubuntu 24.04) | >= 2.28 | supported |
+| Older distributions (e.g. Ubuntu 18.04 with 2.27, CentOS 7 with 2.17) | < 2.28 | unsupported — use the release wheel or a locally built image |
 
-If the binary fails with a loader error such as
-`version 'GLIBC_2.38' not found`, use one of these instead:
+Older glibc is not supported by the binary. If it fails with a loader error
+such as `version 'GLIBC_2.38' not found`, use a channel this project actually
+publishes: wheels, sdist and binaries are attached to the GitHub releases only
+(nothing is published to PyPI or to a container registry).
 
 ```bash
-pipx install mid            # wheel: no glibc floor beyond your Python
-python -m pip install --user mid
-docker run --rm mid --version
+# Pure-Python wheel from the GitHub release (no glibc floor beyond your Python)
+gh release download <tag> --repo ezeprimo/mid --pattern '*.whl'
+python -m pip install ./mid-<version>-py3-none-any.whl
 ```
 
-Releases before `0.4.1` were built on `ubuntu-latest` and required glibc 2.38.
+Or build the container image locally (see [Docker](#docker)) and convert there:
+
+```bash
+docker build -f docker/Dockerfile -t mid .
+docker run --rm -v "$PWD:/docs" mid convert /docs/report.docx -o /docs/report.md
+```
+
+The floor is exercised in CI, not just documented: a real `.docx` conversion
+runs on `rockylinux:8` (glibc 2.28), and the release smoke runs the binary on
+`ubuntu:20.04` (glibc 2.31). Both images differ from the `manylinux_2_28` build
+container, so a too-new glibc requirement fails CI instead of shipping.
+
+Releases before `0.4.1` were built on `ubuntu-latest` (Ubuntu 24.04) and
+required glibc 2.38, so they aborted on Ubuntu 22.04 and Debian 12.
 
 ### Update checker
 
