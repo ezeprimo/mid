@@ -43,11 +43,9 @@ jobs:
         include:
           - os: windows-latest
             target: windows-amd64
-            script: scripts/build.ps1
             artifact_name: mid-windows-amd64.exe
           - os: ubuntu-latest
             target: linux-amd64
-            script: scripts/build.sh
             artifact_name: mid-linux-amd64
 
     steps:
@@ -101,38 +99,15 @@ jobs:
             exit 1
           fi
 
-      - name: Generate smoke .docx (cross-platform)
-        shell: python
-        run: |
-          import os
-          from pathlib import Path
-          from zipfile import ZIP_DEFLATED, ZipFile
+      - name: Generate smoke .docx (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/release/make_smoke_docx.py --output "$env:RUNNER_TEMP/workflow-smoke.docx"
 
-          run_temp = Path(os.environ["RUNNER_TEMP"])
-          out = run_temp / "workflow-smoke.docx"
-
-          content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-          <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-            <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-            <Default Extension="xml" ContentType="application/xml"/>
-            <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-          </Types>
-          """
-          rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-          </Relationships>
-          """
-          document = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-          <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-            <w:body><w:p><w:r><w:t>workflow smoke conversion</w:t></w:r></w:p></w:body>
-          </w:document>
-          """
-
-          with ZipFile(out, mode="w", compression=ZIP_DEFLATED) as zf:
-            zf.writestr("[Content_Types].xml", content_types)
-            zf.writestr("_rels/.rels", rels)
-            zf.writestr("word/document.xml", document)
+      - name: Generate smoke .docx (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python scripts/release/make_smoke_docx.py --output "$RUNNER_TEMP/workflow-smoke.docx"
 
       - name: Smoke conversion (Windows)
         if: runner.os == 'Windows'
@@ -155,10 +130,13 @@ jobs:
         run: |
           DOCX="$RUNNER_TEMP/workflow-smoke.docx"
           MD="$RUNNER_TEMP/workflow-smoke.md"
+          # Convert on the documented glibc floor image (rockylinux:8, glibc
+          # 2.28): --version exits before the converter imports markitdown/
+          # magika/onnxruntime, which are what pin the artifact's glibc floor.
           docker run --rm \
             -v "$RUNNER_TEMP:/smoke:rw" \
             -v "$PWD/dist:/dist:ro" \
-            ubuntu:20.04 \
+            rockylinux:8 \
             /dist/mid-linux-amd64 convert /smoke/workflow-smoke.docx -o /smoke/workflow-smoke.md
           test -f "$MD"
           grep -q "workflow smoke conversion" "$MD"

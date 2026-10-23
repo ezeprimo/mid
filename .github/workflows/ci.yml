@@ -110,3 +110,19 @@ jobs:
             echo "ERROR: the Linux binary does not start on ubuntu:20.04 (glibc 2.31)"
             exit 1
           fi
+      - name: Generate smoke .docx (Linux)
+        shell: bash
+        run: python3 scripts/release/make_smoke_docx.py --output "$RUNNER_TEMP/ci-smoke.docx"
+      - name: Smoke conversion (Linux floor image)
+        shell: bash
+        run: |
+          # --version exits before the converter imports markitdown/magika/
+          # onnxruntime, which are what actually pin the glibc floor of the
+          # artifact, so the real proof is a conversion on the floor image.
+          docker run --rm \
+            -v "$RUNNER_TEMP:/smoke:rw" \
+            -v "$PWD/dist:/dist:ro" \
+            rockylinux:8 \
+            /dist/mid-linux-amd64 convert /smoke/ci-smoke.docx -o /smoke/ci-smoke.md
+          test -f "$RUNNER_TEMP/ci-smoke.md"
+          grep -q "workflow smoke conversion" "$RUNNER_TEMP/ci-smoke.md"
