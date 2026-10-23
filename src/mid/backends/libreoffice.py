@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from mid.backends.base import Availability, Backend
-from mid.backends.detection import run_version, which_tool
+from mid.backends.detection import tool_env, run_version, which_tool
 from mid.models import ConvertResult
 
 logger = logging.getLogger(__name__)
@@ -186,7 +186,7 @@ class LibreOfficeBackend(Backend):
                     str(tmp_input),
                 ]
                 try:
-                    result = subprocess.run(cmd, shell=False, capture_output=True, text=True, timeout=timeout)
+                    result = subprocess.run(cmd, shell=False, capture_output=True, text=True, timeout=timeout, env=tool_env())
                 except subprocess.TimeoutExpired:
                     return ConvertResult(
                         content="",
