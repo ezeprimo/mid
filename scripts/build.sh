@@ -57,8 +57,8 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 if [[ -n "${MID_BUILD_PYTHON:-}" ]]; then
-  if [[ ! -x "$MID_BUILD_PYTHON" ]]; then
-    echo "error: MID_BUILD_PYTHON does not point to an executable: $MID_BUILD_PYTHON" >&2
+  if [[ ! -f "$MID_BUILD_PYTHON" || ! -x "$MID_BUILD_PYTHON" ]]; then
+    echo "error: MID_BUILD_PYTHON does not point to an executable file: $MID_BUILD_PYTHON" >&2
     exit 2
   fi
   PYTHON="$MID_BUILD_PYTHON"
