@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-23
+
 ### Added
 
 - **`batch --backend` for parity with `convert` (#40)**: `mid batch <dir> --backend <name>` converts every file the
@@ -15,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   need the flag.
 - **Auto-routing for ODF/RTF (#42)**: `.odt`, `.ods`, `.odp` and `.rtf` have no native converter, so they used to be rejected with `unsupported format` even when a backend could handle them. They are now routed to an available backend automatically — `mid convert report.odt` works without `--backend libreoffice`. When the backend is missing the command exits `3` naming the format, the backend, the reason and both exits (`--backend libreoffice` and the install hint) instead of claiming the format is unsupported.
 - **`--list-formats` reports backend-only formats**: a third line, `Via backend (auto-detected): .odp .ods .odt .rtf`, is derived from what registered backends declare minus what native converters handle, so the capability is discoverable. It is omitted when no backend adds a format.
+
+### Fixed
+
+- **Fallback guidance pointed at a package this project does not publish (#60)**: both installers and the generated
+  release notes told a blocked user to run `pipx install mid==X`, but releases publish wheels and binaries as GitHub
+  release assets only. The guidance now downloads this release's wheel and installs it locally, and `install.sh`/
+  `install.ps1` gained a `MID_RELEASES_BASE` override.
 
 ### Changed
 
@@ -157,7 +166,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project contact**: Set to `ezeprimo.ia@gmail.com` using GitHub noreply alias
 - **Repository prepared for public visibility**
 
-[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ezeprimo/mid/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/ezeprimo/mid/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ezeprimo/mid/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ezeprimo/mid/compare/v0.2.0...v0.3.0
