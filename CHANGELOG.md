@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-23
+
 ### Fixed
 
 - **Linux binary glibc floor (#57)**: `mid-linux-amd64` is now built with PyInstaller inside a `manylinux_2_28` container, so it requires glibc >= 2.28 instead of 2.38. Releases up to 0.4.0 were built on `ubuntu-latest` (Ubuntu 24.04) and aborted on Ubuntu 22.04 / Debian 12 with `version 'GLIBC_2.38' not found`.
@@ -142,7 +144,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project contact**: Set to `ezeprimo.ia@gmail.com` using GitHub noreply alias
 - **Repository prepared for public visibility**
 
-[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ezeprimo/mid/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ezeprimo/mid/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ezeprimo/mid/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ezeprimo/mid/compare/v0.1.1...v0.2.0
