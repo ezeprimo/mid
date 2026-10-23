@@ -34,7 +34,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 | --- | --- |
 | `mid` not found on PATH | Install via bootstrap installer. |
 | Single file conversion | `mid convert <file> [-o <output>] [--json]` |
-| Batch directory conversion | `mid batch <input> -o <output> [--recursive --preserve\|--recursive --flatten]` |
+| Batch directory conversion | `mid batch <input> -o <output> [--backend <name>] [--recursive --preserve\|--recursive --flatten]` |
 | Check supported formats | `mid --list-formats` |
 | Need inline help | `mid help <command>` |
 | Legacy `.doc/.xls/.ppt` input | Convert via `mid convert <file> --backend libreoffice [-o <output>]`; on Windows when `mid doctor` shows `backend:office` ok, offer `mid convert <file> --backend office` for `.doc`/`.xls` (never `.ppt`); only stop as unsupported if the backend is unavailable (exit 3) and no Docker legacy image is usable. Map exit 2 (unknown backend) and exit 3 (unavailable with reason). |
@@ -46,7 +46,9 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 1. Check if `mid` is installed: `mid --version`. If found, use the system binary.
 2. If not found, install via bootstrap installer.
 3. For single file: `mid convert <file> [-o <output>] [--json]`
-4. For batch: `mid batch <dir> -o <outdir> [--recursive --preserve | --recursive --flatten]`
+4. For batch: `mid batch <dir> -o <outdir> [--backend <name>] [--recursive --preserve | --recursive --flatten]`.
+   `--backend` converts every file that backend declares and counts the rest as `Skipped`; batch never auto-routes,
+   so backend-only formats (`.doc`/`.xls`/`.ppt`/`.odt`/`.ods`/`.odp`/`.rtf`) need the flag.
 5. Always verify a real conversion works (not just `--help`).
 6. Use exit codes to decide next action (2 = unknown backend, 3 = unavailable backend or unsupported format).
 7. For legacy formats, prefer `--backend libreoffice` (local `soffice` on PATH or `MID_LIBREOFFICE_PATH`) or the `mid:legacy` Docker image; see Legacy Backends.

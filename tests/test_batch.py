@@ -503,3 +503,124 @@ class TestBatchWriteFailure:
 
         assert code == 1
         assert "Failed: 1" in out
+
+
+# ===========================================================================
+# --backend (issue #40)
+# ===========================================================================
+
+
+class TestBatchBackend:
+    """`batch --backend` mirrors `convert --backend` (issue #40)."""
+
+    @pytest.fixture
+    def fake_backend(self):
+        """Register a backend that declares .odt and reports availability."""
+        from datetime import datetime, timezone
+
+        from mid.backends.base import Availability, Backend
+        from mid.backends.registry import registry
+        from mid.models import ConvertResult as _ConvertResult
+
+        class _Fake(Backend):
+            def __init__(self, available: bool, reason: str | None = None) -> None:
+                super().__init__()
+                self.name = "libreoffice"
+                self.display_name = "LibreOffice"
+                self.supported_extensions = frozenset({".odt", ".rtf"})
+                self.required_tools = tuple()
+                self._available = available
+                self._reason = reason
+
+            def probe(self) -> Availability:
+                return Availability(
+                    available=self._available,
+                    version="7.6",
+                    tool_path="/usr/bin/soffice",
+                    reason=self._reason,
+                    checked_at=datetime.now(timezone.utc),
+                )
+
+            def convert(self, path: Path) -> _ConvertResult:
+                return _ConvertResult(content="from backend", metadata={}, success=True, error=None)
+
+        original = list(registry.list_all())
+        registry.clear()
+
+        def register(available: bool = True, reason: str | None = None) -> _Fake:
+            backend = _Fake(available=available, reason=reason)
+            registry.register(backend)
+            return backend
+
+        yield register
+
+        registry.clear()
+        for backend in original:
+            registry.register(backend)
+
+    @pytest.fixture
+    def mixed_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / "mixed"
+        d.mkdir()
+        (d / "modern.docx").write_text("docx", encoding="utf-8")
+        (d / "legacy.odt").write_text("odt", encoding="utf-8")
+        (d / "notes.txt").write_text("skip", encoding="utf-8")
+        return d
+
+    def test_backend_converts_the_formats_it_declares(
+        self, fake_backend, mixed_dir: Path, tmp_path: Path, mock_convert_success
+    ) -> None:
+        fake_backend(available=True)
+        output = tmp_path / "out"
+
+        code, out, err = _run(["batch", str(mixed_dir), "-o", str(output), "--backend", "libreoffice"])
+
+        assert code == 0, f"stderr: {err}"
+        # The backend declares .odt; .docx and .txt are not its job.
+        assert (output / "legacy.md").exists()
+        assert not (output / "modern.md").exists()
+        assert "Processed: 1" in out
+        assert "Skipped: 2" in out
+        assert mock_convert_success.call_args.kwargs["backend"] == "libreoffice"
+
+    def test_unknown_backend_exits_2_and_does_nothing(
+        self, fake_backend, mixed_dir: Path, tmp_path: Path, mock_convert_success
+    ) -> None:
+        fake_backend(available=True)
+        output = tmp_path / "out"
+
+        code, out, err = _run(["batch", str(mixed_dir), "-o", str(output), "--backend", "nope"])
+
+        assert code == 2
+        assert "unknown backend 'nope'" in err
+        assert not mock_convert_success.called
+        assert not output.exists()
+
+    def test_unavailable_backend_exits_3_and_does_nothing(
+        self, fake_backend, mixed_dir: Path, tmp_path: Path, mock_convert_success
+    ) -> None:
+        fake_backend(available=False, reason="LibreOffice not found — install LibreOffice 7.6+")
+        output = tmp_path / "out"
+
+        code, out, err = _run(["batch", str(mixed_dir), "-o", str(output), "--backend", "libreoffice"])
+
+        assert code == 3
+        assert "libreoffice" in err
+        assert "install LibreOffice 7.6+" in err
+        assert not mock_convert_success.called
+        assert not output.exists()
+
+    def test_without_backend_backend_formats_are_still_skipped(
+        self, fake_backend, mixed_dir: Path, tmp_path: Path, mock_convert_success
+    ) -> None:
+        fake_backend(available=True)
+        output = tmp_path / "out"
+
+        code, out, err = _run(["batch", str(mixed_dir), "-o", str(output)])
+
+        assert code == 0
+        assert (output / "modern.md").exists()
+        assert not (output / "legacy.md").exists()
+        # Auto-routing in batch is out of scope for #40: without the flag these
+        # stay skipped rather than silently changing the count semantics.
+        assert "Skipped: 2" in out
