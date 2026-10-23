@@ -82,6 +82,9 @@ Notes: local conversion needs `soffice` on PATH (`MID_LIBREOFFICE_PATH` override
 ## Format guidance
 
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
+- Formats on the `Via backend (auto-detected):` line (`.odt`, `.ods`, `.odp`, `.rtf`) are auto-routed to an installed
+  backend, so `mid convert report.odt` works without `--backend libreoffice`. Without the backend the exit is 3 and the
+  message names the backend, the reason and the install hint.
 - Legacy formats `.doc`, `.xls`, `.ppt` are rejected by default but convertible via a legacy backend (see above).
 - Exception: on Windows with the `office` backend available (`mid doctor` shows `backend:office` ok — listing with `--list-backends` never probes opt-in backends), `.doc`/`.xls` convert via `mid convert <file> --backend office` (see `docs/office-backend.md`). `.ppt` always stays migrate-first.
 

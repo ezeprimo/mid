@@ -56,6 +56,21 @@ def list_backends():
     return registry.list_all()
 
 
+def backend_only_formats() -> list[str]:
+    """Return extensions no native converter handles but a backend declares.
+
+    These are the formats ``mid convert`` can reach through auto-routing. The
+    list is derived, never hardcoded: a backend that stops declaring an
+    extension stops advertising it.
+    """
+    from mid.backends.registry import registry
+
+    advertised: set[str] = set()
+    for backend in registry.list_all():
+        advertised.update(backend.supported_extensions)
+    return sorted(ext for ext in advertised if ext not in REGISTRY)
+
+
 def resolve_backend(ext: str, preferred: str | None = None):
     """Resolve backend for extension. Returns None on ambiguity or unknown."""
     from mid.backends.registry import registry

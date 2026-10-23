@@ -21,6 +21,9 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 - Check exit codes: 0 success, 1 conversion error, 2 argument error, 3 unsupported format.
 - If `mid` is not found on PATH, install via bootstrap installer.
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
+- Formats listed under `Via backend (auto-detected):` (`.odt`, `.ods`, `.odp`, `.rtf`) have no native converter but are
+  **auto-routed** to a backend when one is installed: `mid convert report.odt` works without `--backend`. If the backend
+  is missing the command exits 3 naming the backend, the reason and the install hint — not `unsupported format`.
 - Legacy Office formats `.doc`, `.xls`, `.ppt` are rejected by default; convert them explicitly via a legacy backend (`--backend libreoffice`) instead of reporting them as unsupported.
 - Discover non-opt-in backends at runtime with `mid --list-backends` (2s never-raise probe); never assume which backends are available. The Windows `office` backend is opt-in: listing never probes it, so discover it with `mid doctor` instead (explicit probe, `backend:office` ok).
 - Exception: on Windows with the `office` backend available (`mid doctor` shows `backend:office` ok), offer `mid convert <file> --backend office` for `.doc`/`.xls` instead of stopping. `.ppt` always stays migrate-first (v1 scope: Word/Excel only).

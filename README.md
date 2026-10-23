@@ -154,6 +154,9 @@ The uninstaller removes the `mid` binary, cleans up the installer PATH entry, re
 # Show version and supported formats
 mid --version
 mid --list-formats
+#   Supported: .docx .pdf .pptx .xlsx
+#   Legacy (migrate first): .doc .ppt .xls
+#   Via backend (auto-detected): .odp .ods .odt .rtf
 
 # Convert one file
 mid convert ./docs/report.docx
@@ -243,7 +246,10 @@ MID_LIBREOFFICE_PATH="C:\Program Files\LibreOffice\program\soffice.bin" mid conv
 ```
 
 Exit codes: unknown backend `2`, unavailable backend `3` (with install hint), conversion failure `1`, success `0`.
-`--list-formats` stays frozen — the backend is selected explicitly via `--backend libreoffice`.
+`--backend <name>` is always available to force a backend. Formats only a backend can handle are
+**auto-routed**: `mid convert report.odt` uses LibreOffice when it is installed, without the flag, and
+`--list-formats` reports them on the `Via backend (auto-detected):` line. When the backend is missing the
+command exits `3` naming the backend, the reason, and both `--backend <name>` and the install hint.
 
 ### Environment variables
 
@@ -254,7 +260,8 @@ Exit codes: unknown backend `2`, unavailable backend `3` (with install hint), co
 
 ### Supported formats (backend)
 
-When `--backend libreoffice` is used, the backend declares:
+Formats with no native converter are routed to an available backend automatically; `--backend libreoffice`
+forces it. The backend declares:
 
 - `.doc`, `.docx`, `.odt`, `.rtf`
 - `.xls`, `.xlsx`, `.ods`

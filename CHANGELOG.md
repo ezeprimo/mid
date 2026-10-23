@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Auto-routing for ODF/RTF (#42)**: `.odt`, `.ods`, `.odp` and `.rtf` have no native converter, so they used to be rejected with `unsupported format` even when a backend could handle them. They are now routed to an available backend automatically — `mid convert report.odt` works without `--backend libreoffice`. When the backend is missing the command exits `3` naming the format, the backend, the reason and both exits (`--backend libreoffice` and the install hint) instead of claiming the format is unsupported.
+- **`--list-formats` reports backend-only formats**: a third line, `Via backend (auto-detected): .odp .ods .odt .rtf`, is derived from what registered backends declare minus what native converters handle, so the capability is discoverable. It is omitted when no backend adds a format.
+
+### Changed
+
+- **`--list-formats` contract is now three lines** when backends add formats; the first two lines are unchanged.
+
 ## [0.4.1] — 2026-10-23
 
 ### Fixed

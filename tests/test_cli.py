@@ -74,19 +74,46 @@ class TestListFormats:
         for ext in (".doc", ".xls", ".ppt"):
             assert ext in legacy_line
 
-    def test_output_format_contract(self) -> None:
-        """Verify exact output shape (2 lines, space-separated extensions)."""
+    @pytest.fixture
+    def builtin_backends(self):
+        """Guarantee the built-in backends are registered for this test.
+
+        Registration happens on import, so a test that cleared the registry
+        earlier in the session would otherwise change this output.
+        """
+        import mid.backends  # noqa: F401
+        from mid.backends.libreoffice import LibreOfficeBackend
+        from mid.backends.registry import registry
+
+        if registry.get("libreoffice") is None:
+            registry.register(LibreOfficeBackend())
+        yield
+
+    def test_output_format_contract(self, builtin_backends) -> None:
+        """Verify exact output shape: 3 lines, space-separated extensions."""
         code, out, err = _run(["--list-formats"])
         assert code == 0
         lines = out.strip().splitlines()
-        assert len(lines) == 2
-        supported_line = lines[0]
-        legacy_line = lines[1]
+        assert len(lines) == 3
+        supported_line, legacy_line, backend_line = lines
         assert supported_line.startswith("Supported:")
         assert legacy_line.startswith("Legacy (migrate first):")
+        assert backend_line.startswith("Via backend (auto-detected):")
         # Each extension should be separated by a single space
-        supported_exts = supported_line.replace("Supported: ", "").split()
-        assert all(e.startswith(".") for e in supported_exts)
+        for line, label in (
+            (supported_line, "Supported: "),
+            (legacy_line, "Legacy (migrate first): "),
+            (backend_line, "Via backend (auto-detected): "),
+        ):
+            exts = line.replace(label, "").split()
+            assert exts, f"{label} must list at least one extension"
+            assert all(e.startswith(".") for e in exts)
+            assert exts == sorted(exts), f"{label} must be sorted"
+        # The backend line must not repeat formats a native converter handles.
+        supported_exts = set(supported_line.replace("Supported: ", "").split())
+        legacy_exts = set(legacy_line.replace("Legacy (migrate first): ", "").split())
+        backend_exts = set(backend_line.replace("Via backend (auto-detected): ", "").split())
+        assert backend_exts.isdisjoint(supported_exts | legacy_exts)
 
 
 # ===========================================================================
