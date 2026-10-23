@@ -12,6 +12,7 @@ on:
       - "docker/Dockerfile.legacy"
       - "docker/README.md"
       - "tests/fixtures/legacy/**"
+      - "src/mid/**"
       - ".github/workflows/docker-legacy.yml"
   pull_request:
     branches: [main]
@@ -19,6 +20,7 @@ on:
       - "docker/Dockerfile.legacy"
       - "docker/README.md"
       - "tests/fixtures/legacy/**"
+      - "src/mid/**"
       - ".github/workflows/docker-legacy.yml"
 
 permissions:

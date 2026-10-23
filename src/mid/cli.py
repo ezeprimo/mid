@@ -177,6 +177,19 @@ def handler_convert(args: argparse.Namespace) -> None:
 
     # Backend handling — additive, preserves existing path when no --backend
     backend_name = getattr(args, "backend", None)
+    ext_for_routing = path.suffix.lower()
+    auto_routed = False
+    if backend_name is None and ext_for_routing and resolve_converter(ext_for_routing) is None:
+        # No native converter: a backend may still declare this format (#42).
+        # Only extensions a backend actually declares reach the probe, so an
+        # unknown extension never pays the detection cost.
+        from mid.engine import resolve_backend
+
+        candidate = resolve_backend(ext_for_routing)
+        if candidate is not None:
+            backend_name = candidate.name
+            auto_routed = True
+            logger.info("auto-routing %s to backend '%s'", ext_for_routing, backend_name)
     if backend_name is not None:
         from mid.backends.registry import registry
 
@@ -186,9 +199,20 @@ def handler_convert(args: argparse.Namespace) -> None:
             print(f"error: unknown backend '{backend_name}'; available backends: {available}", file=sys.stderr)
             sys.exit(2)
         # Explicit --backend selection is consent to probe, including opt-in backends.
+        # Auto-routing probes too: the cache only stores available=True, so a
+        # cached-only lookup would never route on a fresh process.
         avail = b.is_available(refresh=True)
         if not avail.available:
             reason = avail.reason or "unavailable"
+            if auto_routed:
+                # A wrong refusal outranks a missing one: name the format, the
+                # backend that would handle it, and the runnable exit.
+                print(
+                    f"error: format {ext_for_routing} needs the '{backend_name}' backend, which is unavailable: {reason}",
+                    file=sys.stderr,
+                )
+                print(f"hint: install it, or select it explicitly with --backend {backend_name}", file=sys.stderr)
+                sys.exit(3)
             print(f"error: backend '{backend_name}' unavailable: {reason}", file=sys.stderr)
             sys.exit(3)
         # delegate to backend via engine
@@ -448,6 +472,9 @@ def main() -> None:
 
         # --list-formats is a top-level flag (no subcommand needed)
         if args.list_formats:
+            # Register the built-in backends explicitly so the advertised format
+            # list never depends on whether something else imported them first.
+            from mid import backends  # noqa: F401
             from mid.converters.legacy import LegacyPlaceholder
 
             supported = []
@@ -459,6 +486,13 @@ def main() -> None:
                     supported.append(ext)
             print(f"Supported: {' '.join(supported)}")
             print(f"Legacy (migrate first): {' '.join(legacy)}")
+            # Formats no native converter handles but a backend does: naming them
+            # turns "unsupported format" into a discoverable capability.
+            from mid.engine import backend_only_formats
+
+            via_backend = backend_only_formats()
+            if via_backend:
+                print(f"Via backend (auto-detected): {' '.join(via_backend)}")
             return
 
         # --list-backends top-level flag (bounded 2s per backend)
