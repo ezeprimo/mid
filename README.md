@@ -165,9 +165,15 @@ mid convert ./docs/report.docx -o ./out/report.md
 # Convert a directory
 mid batch ./docs -o ./out
 mid batch ./docs -o ./out --recursive --preserve
+mid batch ./docs -o ./out --backend libreoffice   # only the formats that backend declares
 ```
 
-> Note: `mid batch` has no `--backend` flag — legacy files (`.doc`/`.xls`/`.ppt`) fail in batch mode with the migrate-first message. Convert them individually with `mid convert --backend <name>`.
+`mid batch <dir> --backend <name>` applies that backend to every file it declares: the backend decides what is
+converted, and files it does not declare are counted as `Skipped`. An unknown backend exits `2` and an unavailable
+one exits `3` before anything is converted or the output directory is created.
+
+> Note: `batch` has no auto-routing. Without `--backend`, formats that need a backend (`.doc`/`.xls`/`.ppt` and the
+> auto-routed `.odt`/`.ods`/`.odp`/`.rtf`) are counted as `Skipped`; pass `--backend libreoffice` to convert them.
 
 ## Logging
 

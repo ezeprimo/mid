@@ -94,6 +94,7 @@ def setup_parser() -> argparse.ArgumentParser:
     bat.add_argument("--recursive", action="store_true", help="process subdirectories")
     bat.add_argument("--flatten", action="store_true", help="flatten output structure (requires --recursive)")
     bat.add_argument("--preserve", action="store_true", help="preserve directory structure in output")
+    bat.add_argument("--backend", help="backend to use for conversion")
     bat.add_argument(
         "-v",
         "--verbose",
@@ -330,6 +331,28 @@ def handler_batch(args: argparse.Namespace) -> None:
     if args.preserve and not args.recursive:
         _exit_arg("--preserve requires --recursive")
 
+    # --backend (issue #40): resolve before touching the filesystem, so an
+    # invalid or unavailable backend processes nothing and creates no output dir.
+    backend_name = getattr(args, "backend", None)
+    backend = None
+    if backend_name is not None:
+        from mid.backends.registry import registry
+
+        backend = registry.get(backend_name)
+        if backend is None:
+            available_names = ", ".join([x.name for x in registry.list_all()]) or "none"
+            print(
+                f"error: unknown backend '{backend_name}'; available backends: {available_names}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        # Explicit --backend selection is consent to probe, including opt-in backends.
+        backend_availability = backend.is_available(refresh=True)
+        if not backend_availability.available:
+            reason = backend_availability.reason or "unavailable"
+            print(f"error: backend '{backend_name}' unavailable: {reason}", file=sys.stderr)
+            sys.exit(3)
+
     # Discover files
     if args.recursive:
         try:
@@ -340,8 +363,14 @@ def handler_batch(args: argparse.Namespace) -> None:
         all_entries = list(input_dir.iterdir())
 
     files = [f for f in all_entries if f.is_file()]
-    supported = [f for f in files if resolve_converter(f.suffix) is not None]
-    skipped = len([f for f in files if resolve_converter(f.suffix) is None])
+    if backend is not None:
+        # With an explicit backend, the batch is "convert what this backend
+        # handles": files it does not declare are skipped, not failed.
+        declared = backend.supported_extensions
+        supported = [f for f in files if f.suffix.lower() in declared]
+    else:
+        supported = [f for f in files if resolve_converter(f.suffix) is not None]
+    skipped = len(files) - len(supported)
 
     processed = len(supported)
     succeeded = 0
@@ -357,7 +386,7 @@ def handler_batch(args: argparse.Namespace) -> None:
     used_names: set[str] = set()
 
     for file_path in supported:
-        result = convert_file(file_path)
+        result = convert_file(file_path, backend=backend_name)
 
         if result.success:
             # Determine output path
