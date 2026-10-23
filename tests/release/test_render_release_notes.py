@@ -33,6 +33,17 @@ def test_normalize_version_accepts_tag_or_plain() -> None:
     assert normalize_version("1.2.3") == ("v1.2.3", "1.2.3")
 
 
+def test_fallback_points_at_the_release_wheel_not_a_pypi_name() -> None:
+    notes = render_release_notes("v1.2.3", "1.2.3", "owner/repo")
+
+    # The project publishes wheels as release assets only; there is no PyPI
+    # package, so guidance that installs by name cannot resolve.
+    assert "mid-1.2.3-py3-none-any.whl" in notes
+    assert "releases/download/v1.2.3/" in notes
+    assert "pipx install mid==" not in notes
+    assert "pip install --user mid==" not in notes
+
+
 def test_rendered_notes_satisfy_release_contract_requirements() -> None:
     notes = render_release_notes("v1.2.3", "1.2.3", "owner/repo")
     release = _base_release_payload(notes)
@@ -48,7 +59,7 @@ class TestRenderReleaseNotesMain:
         "## Install Windows",
         "## Install Linux",
         "## Version Pinning",
-        "## Fallback (pipx/pip)",
+        "## Fallback (release wheel)",
         "## Rollback",
         "## Uninstall",
     )

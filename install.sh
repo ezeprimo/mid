@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="${MID_REPO:-ezeprimo/mid}"
 API_BASE="${MID_API_BASE:-https://api.github.com}"
 RAW_BASE="${MID_RAW_BASE:-https://raw.githubusercontent.com}"
+RELEASES_BASE="${MID_RELEASES_BASE:-https://github.com}"
 REQUESTED_VERSION_RAW="${MID_VERSION:-latest}"
 if [[ -z "${REQUESTED_VERSION_RAW}" ]]; then
   REQUESTED_VERSION_RAW="latest"
@@ -89,12 +90,19 @@ show_fallback_guidance() {
   local reason="$2"
   local package_version="${resolved_tag#v}"
   local install_script_url="$RAW_BASE/$REPO/$resolved_tag/install.sh"
+  # The project publishes no PyPI package: installing by name resolves nothing,
+  # so a blocked user gets this release's wheel instead.
+  local wheel_name="mid-$package_version-py3-none-any.whl"
+  local wheel_url="$RELEASES_BASE/$REPO/releases/download/$resolved_tag/$wheel_name"
 
   echo "WARNING: Binary install stopped: $reason" >&2
   echo
   echo "Fallback with the same version target ($resolved_tag):"
-  echo "  pipx install --force 'mid==$package_version'"
-  echo "  python -m pip install --user 'mid==$package_version'"
+  echo "  This release attaches a pure-Python wheel with no binary and no glibc floor:"
+  echo "    curl -fsSLO $wheel_url"
+  echo "    python -m pip install --user ./$wheel_name"
+  echo "  Or install it isolated with pipx:"
+  echo "    pipx install ./$wheel_name"
   echo
   echo "Update to latest stable:"
   echo "  unset MID_VERSION"

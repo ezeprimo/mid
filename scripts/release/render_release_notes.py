@@ -22,10 +22,12 @@ def _render_operator_sections(tag: str, package_version: str, repo: str) -> list
             ],
         ),
         (
-            "Fallback (pipx/pip)",
+            "Fallback (release wheel)",
             [
-                f"`pipx install mid=={package_version}`",
-                f"`python -m pip install --user mid=={package_version}`",
+                "The release attaches a pure-Python wheel with no binary and no glibc floor:",
+                f"`curl -fsSLO https://github.com/{repo}/releases/download/{tag}/mid-{package_version}-py3-none-any.whl`",
+                f"`python -m pip install ./mid-{package_version}-py3-none-any.whl`",
+                f"`pipx install ./mid-{package_version}-py3-none-any.whl`",
             ],
         ),
         (
