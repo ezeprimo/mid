@@ -66,7 +66,8 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-      - name: Install build dependencies
+      - name: Install build dependencies (Windows)
+        if: runner.os == 'Windows'
         run: python -m pip install --upgrade pip 'pyinstaller==6.11.0' build 'markitdown[all]'
 
       - name: Build Windows binary
@@ -74,10 +75,10 @@ jobs:
         shell: pwsh
         run: ./scripts/build.ps1 -Clean -Version "${{ github.ref_name }}" -OutputDir dist
 
-      - name: Build Linux binary
+      - name: Build Linux binary (manylinux_2_28, glibc >= 2.28)
         if: runner.os == 'Linux'
         shell: bash
-        run: bash ./scripts/build.sh --clean --version "${{ github.ref_name }}" --output-dir dist
+        run: bash ./scripts/build-linux-manylinux.sh --clean --version "${{ github.ref_name }}" --output-dir dist
 
       - name: Smoke check --version (Windows)
         if: runner.os == 'Windows'
@@ -88,11 +89,13 @@ jobs:
             throw "version output did not include expected marker"
           }
 
-      - name: Smoke check --version (Linux)
+      - name: Smoke check --version (Linux, glibc floor image)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          version_out="$(./dist/mid-linux-amd64 --version)"
+          # Run the binary on an older image than both the build container and
+          # ubuntu-latest, otherwise a too-new glibc requirement cannot be caught.
+          version_out="$(docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:20.04 /dist/mid-linux-amd64 --version)"
           if ! echo "$version_out" | grep -q "mid"; then
             echo "ERROR: version output did not include expected marker"
             exit 1
@@ -146,13 +149,17 @@ jobs:
             throw "Converted markdown missing expected content"
           }
 
-      - name: Smoke conversion (Linux)
+      - name: Smoke conversion (Linux, glibc floor image)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           DOCX="$RUNNER_TEMP/workflow-smoke.docx"
           MD="$RUNNER_TEMP/workflow-smoke.md"
-          ./dist/mid-linux-amd64 convert "$DOCX" -o "$MD"
+          docker run --rm \
+            -v "$RUNNER_TEMP:/smoke:rw" \
+            -v "$PWD/dist:/dist:ro" \
+            ubuntu:20.04 \
+            /dist/mid-linux-amd64 convert /smoke/workflow-smoke.docx -o /smoke/workflow-smoke.md
           test -f "$MD"
           grep -q "workflow smoke conversion" "$MD"
 
