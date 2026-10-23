@@ -3,6 +3,11 @@ set -euo pipefail
 
 # Build Linux release binary with PyInstaller.
 # Produces mid-linux-amd64 in OUTPUT_DIR.
+#
+# Prefer scripts/build-linux-manylinux.sh for release builds: it pins the
+# glibc floor by building inside a manylinux_2_28 container (issue #57).
+# Building on a modern host produces a binary that only runs on hosts with
+# that same glibc or newer.
 
 CLEAN=0
 VERSION=""
@@ -51,7 +56,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ -f "$REPO_ROOT/.venv/bin/python" ]]; then
+if [[ -n "${MID_BUILD_PYTHON:-}" ]]; then
+  if [[ ! -f "$MID_BUILD_PYTHON" || ! -x "$MID_BUILD_PYTHON" ]]; then
+    echo "error: MID_BUILD_PYTHON does not point to an executable file: $MID_BUILD_PYTHON" >&2
+    exit 2
+  fi
+  PYTHON="$MID_BUILD_PYTHON"
+elif [[ -f "$REPO_ROOT/.venv/bin/python" ]]; then
   PYTHON="$REPO_ROOT/.venv/bin/python"
 else
   PYTHON="python"

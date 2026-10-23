@@ -10,6 +10,8 @@ on:
       - "install.ps1"
       - "scripts/build.sh"
       - "scripts/build.ps1"
+      - "scripts/build-linux-manylinux.sh"
+      - "scripts/release/make_smoke_docx.py"
       - "pyproject.toml"
       - ".github/workflows/install-smoke.yml"
   pull_request:
@@ -20,6 +22,8 @@ on:
       - "install.ps1"
       - "scripts/build.sh"
       - "scripts/build.ps1"
+      - "scripts/build-linux-manylinux.sh"
+      - "scripts/release/make_smoke_docx.py"
       - "pyproject.toml"
       - ".github/workflows/install-smoke.yml"
   workflow_dispatch:
@@ -62,33 +66,23 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install --upgrade pip 'pyinstaller==6.11.0' 'markitdown[all]'
 
-      # Smoke builds use inline PyInstaller to avoid version validation failure
-      # (scripts/build.sh and scripts/build.ps1 require --version to match
-      # package __version__ == 0.1.1; passing v0.0.0 would exit 1). Flags mirror
-      # release.yml / scripts/build.* / docker/Dockerfile builder stage.
-      - name: Build Linux binary
+      - name: Build Linux binary (manylinux_2_28, glibc >= 2.28)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash ./scripts/build-linux-manylinux.sh --clean --output-dir dist
+
+      - name: Smoke the Linux binary on the glibc floor image
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          python -m PyInstaller --onefile --name mid-linux-amd64 --clean \
-            --paths src \
-            --hidden-import markitdown \
-            --hidden-import numpy._core._exceptions \
-            --collect-data magika \
-            --exclude-module torch \
-            --exclude-module tensorflow \
-            --exclude-module transformers \
-            --exclude-module scipy \
-            --exclude-module matplotlib \
-            --exclude-module IPython \
-            --exclude-module jedi \
-            --exclude-module zmq \
-            --exclude-module pytest \
-            --distpath dist \
-            --workpath build \
-            --specpath . \
-            src/mid/__main__.py
-          chmod +x dist/mid-linux-amd64
+          # The artifact must start on the documented floor, not on the runner
+          # OS: a binary that only runs on a newer glibc is issue #57.
+          version_out="$(docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:8 /dist/mid-linux-amd64 --version)"
+          echo "$version_out"
+          if ! echo "$version_out" | grep -q "mid"; then
+            echo "ERROR: the Linux binary does not start on rockylinux:8 (glibc 2.28)"
+            exit 1
+          fi
 
       - name: Build Windows binary
         if: runner.os == 'Windows'
