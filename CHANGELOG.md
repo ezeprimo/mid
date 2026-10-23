@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-23
+
+### Fixed
+
+- **Linux binary could not use the LibreOffice backend (#65)**: PyInstaller exports `LD_LIBRARY_PATH` pointing at its onefile extraction directory and every child process inherited it. The manylinux bundle ships older copies of common libraries (`libcrypto.so.1.1`, `libffi.so.6`, `libbz2.so.1`), so a host `soffice` built against OpenSSL 3 / libffi 8 aborted at startup and the probe reported `could not determine version`. `--list-backends`, `doctor`, `--backend libreoffice` and the auto-routing from 0.5.0 were all unusable in the published binary. External tools are now spawned with a scrubbed environment (`tool_env()`): only when frozen, and only for `LD_LIBRARY_PATH`/`LD_PRELOAD`/`PYTHONHOME`/`PYTHONPATH`/`PYTHONSTARTUP`. Source installs keep their environment untouched.
+
 ## [0.5.0] — 2026-10-23
 
 ### Added
@@ -166,7 +172,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project contact**: Set to `ezeprimo.ia@gmail.com` using GitHub noreply alias
 - **Repository prepared for public visibility**
 
-[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ezeprimo/mid/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/ezeprimo/mid/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ezeprimo/mid/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/ezeprimo/mid/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ezeprimo/mid/compare/v0.3.0...v0.4.0
