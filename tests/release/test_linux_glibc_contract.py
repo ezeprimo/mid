@@ -228,7 +228,14 @@ def test_release_workflow_smoke_uses_the_older_images_for_linux_binary() -> None
     content = _read(RELEASE_WORKFLOW)
 
     linux_smoke_steps = [
-        block for block in content.split("- name:") if "Linux" in block.splitlines()[0] and "docker run" in block
+        block
+        for block in content.split("- name:")
+        if "Linux" in block.splitlines()[0]
+        and "docker run" in block
+        # The backend smoke builds its own LibreOffice image; it is covered by
+        # test_release_backend_smoke.py, where the rule is "the built binary runs
+        # against a real backend", not "a stock image older than the build".
+        and "mid:release-backend-smoke" not in block
     ]
 
     assert linux_smoke_steps, "Linux smoke steps must run the binary inside a container"
