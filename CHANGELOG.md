@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### CI
+
+- **Release smoke exercises a real backend (#65)**: the release workflow now builds the LibreOffice image and runs the *built* binary inside it, asserting `--list-backends` sees the tool, `doctor` probes it, and a real `.odt` converts without `--backend`. The existing smoke converted only a `.docx`, which goes through the native converter and never probed a backend — that is how 0.5.0 shipped a binary with broken LibreOffice detection while every job was green.
+
 ## [0.5.1] — 2026-10-23
 
 ### Fixed

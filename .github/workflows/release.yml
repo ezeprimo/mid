@@ -141,6 +141,49 @@ jobs:
           test -f "$MD"
           grep -q "workflow smoke conversion" "$MD"
 
+      # Regression guard for #65: the release smoke above converts a .docx, which
+      # goes through the native converter and never exercises a backend probe.
+      # That is how v0.5.0 shipped with a binary whose LibreOffice detection was
+      # broken by the bundle's inherited LD_LIBRARY_PATH. This step runs the
+      # *built* binary inside the LibreOffice image and converts a real .odt
+      # without --backend, so probe + auto-routing + conversion are exercised.
+      - name: Build LibreOffice image for the backend smoke
+        if: runner.os == 'Linux'
+        shell: bash
+        run: docker build -f docker/Dockerfile.legacy -t mid:release-backend-smoke .
+
+      - name: Smoke backend probe and ODF conversion (Linux, release binary)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SMOKE="$(mktemp -d)"
+          cp tests/fixtures/legacy/sample.doc "$SMOKE/seed.doc"
+          chmod -R a+rwX "$SMOKE"
+          docker run --rm --entrypoint sh \
+            -v "$SMOKE:/smoke" \
+            -v "$PWD/dist:/dist:ro" \
+            mid:release-backend-smoke -c '
+              set -e
+              # Capture then grep: `doctor` exits 1 when it reports findings
+              # (no ffmpeg / offline update check in a container), and a pipeline
+              # under `set -o pipefail` would fail even when the assertion holds.
+              echo "-- list-backends must see the host LibreOffice"
+              backends=$(/dist/mid-linux-amd64 --list-backends)
+              echo "$backends"
+              echo "$backends" | grep -q "libreoffice: available"
+              echo "-- doctor must probe it"
+              diagnostics=$(/dist/mid-linux-amd64 doctor || true)
+              echo "$diagnostics"
+              echo "$diagnostics" | grep -q "backend:libreoffice: ok"
+              echo "-- a real .odt must convert without --backend (auto-routing)"
+              soffice --headless --norestore --convert-to odt --outdir /smoke /smoke/seed.doc >/dev/null
+              test -f /smoke/seed.odt
+              /dist/mid-linux-amd64 convert /smoke/seed.odt -o /smoke/out.md
+              test -s /smoke/out.md
+            '
+          rm -rf "$SMOKE"
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
