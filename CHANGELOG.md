@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Shared backend env resolution (#47)**: `libreoffice` and `office` each carried their own copy of the same two shapes — a tool-path override that must be an existing file and falls through when it is not, and a timeout clamped to `5..300` with a default of `30`. Both now delegate to `backends/_env.py`, so the next backend reuses it instead of copying it a third time. The probe skeleton was deliberately left alone: the probes differ in ways that matter (platform guard, 2s clock budget, COM versus CLI) and the never-raise caching already lives in `Backend.is_available`.
+
 ### CI
 
 - **Release smoke exercises a real backend (#65)**: the release workflow now builds the LibreOffice image and runs the *built* binary inside it, asserting `--list-backends` sees the tool, `doctor` probes it, and a real `.odt` converts without `--backend`. The existing smoke converted only a `.docx`, which goes through the native converter and never probed a backend — that is how 0.5.0 shipped a binary with broken LibreOffice detection while every job was green.
