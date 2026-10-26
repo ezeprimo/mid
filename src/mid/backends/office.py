@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import gc
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -25,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
 
+from mid.backends._env import resolve_env_path, resolve_timeout
 from mid.backends.base import Availability, Backend
 from mid.models import ConvertResult
 
@@ -145,6 +145,9 @@ def _read_curver(progid: str) -> str | None:
         return None
 
 
+OFFICE_HINT = "Office not detected — install Word/Excel 2016+ or set MID_OFFICE_PATH"
+
+
 def _resolve_tool_path() -> tuple[Path | None, str | None]:
     """Resolve the Office install signal.
 
@@ -154,38 +157,17 @@ def _resolve_tool_path() -> tuple[Path | None, str | None]:
     Returns (Path|None, str|None) where the second is a hint when unresolved.
     The resolved path is a version signal only — it is never executed.
     """
-    env_path = os.environ.get("MID_OFFICE_PATH")
-    if env_path:
-        p = Path(env_path)
-        if p.is_file():
-            return p, None
-        # invalid env falls through to App Paths (OFFICE-02)
-    for exe in ("WINWORD.EXE", "EXCEL.EXE"):
-        found = _read_app_paths(exe)
-        if found is not None:
-            return found, None
-    return None, "Office not detected — install Word/Excel 2016+ or set MID_OFFICE_PATH"
+    return resolve_env_path(
+        "MID_OFFICE_PATH",
+        ("WINWORD.EXE", "EXCEL.EXE"),
+        _read_app_paths,
+        OFFICE_HINT,
+    )
 
 
 def _resolve_timeout() -> int:
     """Resolve convert timeout from MID_OFFICE_TIMEOUT, clamp 5..300 default 30."""
-    raw = os.environ.get("MID_OFFICE_TIMEOUT")
-    if raw is None:
-        logger.info("office timeout: default 30s")
-        return 30
-    try:
-        val = int(raw)
-    except (ValueError, TypeError):
-        logger.info("office timeout: invalid MID_OFFICE_TIMEOUT, using 30s")
-        return 30
-    if val < 5:
-        logger.info("office timeout: clamped to minimum 5s")
-        return 5
-    if val > 300:
-        logger.info("office timeout: clamped to maximum 300s")
-        return 300
-    logger.info("office timeout: %ds", val)
-    return val
+    return resolve_timeout("MID_OFFICE_TIMEOUT", "office")
 
 
 def _resolve_pid(app, exe: str) -> int | str:

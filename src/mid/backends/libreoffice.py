@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import glob
 import logging
-import os
 import shutil
 import subprocess
 import tempfile
@@ -13,10 +12,14 @@ from pathlib import Path
 from typing import ClassVar
 
 from mid.backends.base import Availability, Backend
+from mid.backends._env import resolve_env_path, resolve_timeout
 from mid.backends.detection import tool_env, run_version, which_tool
 from mid.models import ConvertResult
 
 logger = logging.getLogger(__name__)
+
+
+LIBREOFFICE_HINT = "LibreOffice not found — install LibreOffice 7.6+ (libreoffice-writer)"
 
 
 def _resolve_tool_path() -> tuple[Path | None, str | None]:
@@ -27,38 +30,17 @@ def _resolve_tool_path() -> tuple[Path | None, str | None]:
 
     Returns (Path|None, str|None) where second is error hint if needed.
     """
-    env_path = os.environ.get("MID_LIBREOFFICE_PATH")
-    if env_path:
-        p = Path(env_path)
-        if p.is_file():
-            return p, None
-        # invalid env falls through to chain (LIBRE-08)
-    for name in ("soffice", "libreoffice", "soffice.bin"):
-        found = which_tool(name)
-        if found is not None:
-            return found, None
-    return None, "LibreOffice not found — install LibreOffice 7.6+ (libreoffice-writer)"
+    return resolve_env_path(
+        "MID_LIBREOFFICE_PATH",
+        ("soffice", "libreoffice", "soffice.bin"),
+        which_tool,
+        LIBREOFFICE_HINT,
+    )
 
 
 def _resolve_timeout() -> int:
     """Resolve convert timeout from MID_LIBREOFFICE_TIMEOUT, clamp 5..300 default 30."""
-    raw = os.environ.get("MID_LIBREOFFICE_TIMEOUT")
-    if raw is None:
-        logger.info("libreoffice timeout: default 30s")
-        return 30
-    try:
-        val = int(raw)
-    except (ValueError, TypeError):
-        logger.info("libreoffice timeout: invalid MID_LIBREOFFICE_TIMEOUT, using 30s")
-        return 30
-    if val < 5:
-        logger.info("libreoffice timeout: clamped to minimum 5s")
-        return 5
-    if val > 300:
-        logger.info("libreoffice timeout: clamped to maximum 300s")
-        return 300
-    logger.info("libreoffice timeout: %ds", val)
-    return val
+    return resolve_timeout("MID_LIBREOFFICE_TIMEOUT", "libreoffice")
 
 
 def _locate_output(tmp: Path, stem: str) -> Path | None:
