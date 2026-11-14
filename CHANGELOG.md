@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-stage timings in `--json` output (#45)**: `mid convert --json` now carries a `timings` object with `detection_ms`, `probe_ms`, `conversion_ms` and `total_ms`, and `mid batch --json` emits a whole machine-readable summary (`processed`/`succeeded`/`failed`/`skipped`, aggregate `timings` with `total_ms`/`worst_ms`/`p50_ms`, and a `files[]` entry per file with its own stage timings). Values are integer milliseconds, truncated, and the stages are a subset of `total_ms`. This answers the question the old payload could not: a backend stuck in its 2s probe looks nothing like a slow conversion. Additive only — the existing `convert --json` keys are untouched, and `batch` without `--json` still prints the same summary line and exits `1` on failure. `batch --json` keeps stdout pure JSON: the summary line is suppressed, per-file `error:` lines stay on stderr.
+
 ### Changed
 
 - **Shared backend env resolution (#47)**: `libreoffice` and `office` each carried their own copy of the same two shapes — a tool-path override that must be an existing file and falls through when it is not, and a timeout clamped to `5..300` with a default of `30`. Both now delegate to `backends/_env.py`, so the next backend reuses it instead of copying it a third time. The probe skeleton was deliberately left alone: the probes differ in ways that matter (platform guard, 2s clock budget, COM versus CLI) and the never-raise caching already lives in `Backend.is_available`.

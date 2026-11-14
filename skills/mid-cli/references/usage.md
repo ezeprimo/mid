@@ -24,6 +24,18 @@ mid convert ./docs/report.docx --json
 
 When `-o` is absent, output goes to stdout. When `-o` is provided, content is written to the specified file. The `--json` flag wraps content and metadata in a structured JSON payload regardless of `-o`. When `--json` is provided, output always goes to stdout and any `-o` flag is silently ignored.
 
+`--json` also carries a `timings` object, with the same four keys on every route:
+
+```json
+"timings": { "detection_ms": 0, "probe_ms": 0, "conversion_ms": 41, "total_ms": 46 }
+```
+
+All values are integer milliseconds (truncated). `detection_ms` covers format resolution and backend lookup,
+`probe_ms` the availability probes (`0` on the native path, which never probes) and `conversion_ms` the conversion
+itself. `total_ms` is the wall clock over the whole command, so the three stages are a subset of it
+(`detection_ms + probe_ms + conversion_ms <= total_ms`), never a sum. Read the stage timings to tell a stuck probe
+from a slow conversion instead of guessing from the total.
+
 ## Batch conversion
 
 ```bash
@@ -35,7 +47,29 @@ mid batch ./docs -o ./out --recursive --preserve
 
 # Recursive with flattened output (no subdirectories)
 mid batch ./docs -o ./out --recursive --flatten
+
+# Machine-readable summary with timings
+mid batch ./docs -o ./out --json
 ```
+
+`--json` prints exactly one JSON document to stdout; the human `Processed: ...` line is suppressed, per-file `error:`
+lines stay on stderr, and exit `1` still means at least one file failed. Shape:
+
+```json
+{
+  "processed": 2, "succeeded": 1, "failed": 1, "skipped": 0,
+  "timings": { "total_ms": 120, "worst_ms": 82, "p50_ms": 41 },
+  "files": [
+    { "source": "a.docx", "success": true, "error": null,
+      "timings": { "detection_ms": 0, "probe_ms": 0, "conversion_ms": 40, "total_ms": 41 } },
+    { "source": "b.pdf", "success": false, "error": "unsupported format .pdf",
+      "timings": { "detection_ms": 0, "probe_ms": 0, "conversion_ms": 81, "total_ms": 82 } }
+  ]
+}
+```
+
+Per-file `timings.total_ms` is the measured wall clock of that file's conversion; `worst_ms` is the slowest file and
+`p50_ms` the median, both integer milliseconds, with `total_ms >= worst_ms`. No file content is included.
 
 Flag constraints:
 - `--recursive` requires `--preserve` or `--flatten` (to prevent data loss from overwrites).
