@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import sys
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -371,6 +372,68 @@ class TestMainNoArgs:
         code, out, err = _run([])
         assert code == 0
         assert "usage:" in out.lower() or "convert" in out
+
+
+# ===========================================================================
+# JSON timings (issue #45)
+# ===========================================================================
+
+
+class TestConvertJsonTimings:
+    """`convert --json` reports per-stage timings without breaking the schema."""
+
+    def test_native_json_carries_every_stage_key(self, tmp_path: Path) -> None:
+        src = tmp_path / "test.docx"
+        src.write_text("", encoding="utf-8")
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            inst = MockMD.return_value
+            inst.convert.return_value.text_content = "# Hello"
+
+            code, out, err = _run(["convert", str(src), "--json"])
+
+        assert code == 0, f"stderr: {err}"
+        payload = json.loads(out)
+
+        # Additive only: the pre-existing schema is untouched.
+        assert payload["content"] == "# Hello"
+        assert payload["metadata"]["source"] == "test.docx"
+        assert payload["metadata"]["format"] == "docx"
+        assert payload["metadata"]["success"] is True
+        assert payload["error"] is None
+
+        timings = payload["timings"]
+        assert set(timings) == {"detection_ms", "probe_ms", "conversion_ms", "total_ms"}
+        for key, value in timings.items():
+            assert isinstance(value, int), f"{key} must be an integer of milliseconds, got {type(value)}"
+            assert not isinstance(value, bool)
+            assert value >= 0, f"{key} must never be negative"
+
+        # The stages are measured inside one wall clock, so their sum is bounded by it.
+        stages = timings["detection_ms"] + timings["probe_ms"] + timings["conversion_ms"]
+        assert stages <= timings["total_ms"]
+
+        # A native converter never probes a backend: the key is present and zero so
+        # consumers never need a KeyError branch.
+        assert timings["probe_ms"] == 0
+
+    def test_conversion_stage_reflects_real_elapsed_time(self, tmp_path: Path) -> None:
+        src = tmp_path / "slow.docx"
+        src.write_text("", encoding="utf-8")
+
+        def slow_convert(_path: object) -> object:
+            time.sleep(0.03)
+            return type("R", (), {"text_content": "# Slow"})()
+
+        with patch("markitdown.MarkItDown") as MockMD:
+            MockMD.return_value.convert.side_effect = slow_convert
+
+            code, out, err = _run(["convert", str(src), "--json"])
+
+        assert code == 0, f"stderr: {err}"
+        timings = json.loads(out)["timings"]
+        assert timings["conversion_ms"] >= 20, timings
+        assert timings["total_ms"] >= timings["conversion_ms"]
 
 
 class TestConvertDirectory:
