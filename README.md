@@ -166,6 +166,7 @@ mid convert ./docs/report.docx -o ./out/report.md
 mid batch ./docs -o ./out
 mid batch ./docs -o ./out --recursive --preserve
 mid batch ./docs -o ./out --backend libreoffice   # only the formats that backend declares
+mid batch ./docs -o ./out --json                  # machine-readable summary with timings
 ```
 
 `mid batch <dir> --backend <name>` applies that backend to every file it declares: the backend decides what is
@@ -174,6 +175,45 @@ one exits `3` before anything is converted or the output directory is created.
 
 > Note: `batch` has no auto-routing. Without `--backend`, formats that need a backend (`.doc`/`.xls`/`.ppt` and the
 > auto-routed `.odt`/`.ods`/`.odp`/`.rtf`) are counted as `Skipped`; pass `--backend libreoffice` to convert them.
+
+## Timings in JSON output
+
+`mid convert <file> --json` adds a `timings` object to the existing payload (the other keys are unchanged):
+
+```json
+{
+  "content": "# Report",
+  "metadata": { "source": "report.docx", "format": "docx", "success": true },
+  "error": null,
+  "timings": { "detection_ms": 0, "probe_ms": 0, "conversion_ms": 41, "total_ms": 46 }
+}
+```
+
+- Units are **integer milliseconds**, truncated. `total_ms` is the wall clock over the whole command, so the stages
+  are a subset of it: `detection_ms + probe_ms + conversion_ms <= total_ms`.
+- `detection_ms` covers format resolution and backend lookup, `probe_ms` the availability probes (always `0` on the
+  native MarkItDown path, which never probes), `conversion_ms` the conversion itself.
+- The keys are always present, whatever route the file took, so a consumer never needs a missing-key branch.
+- Failure paths carry no payload, so timings are emitted only for conversions that reach the output stage.
+
+`mid batch <dir> -o <out> --json` prints one JSON document to stdout and nothing else (per-file `error:` lines still
+go to stderr, and the run still exits `1` when a file failed):
+
+```json
+{
+  "processed": 2, "succeeded": 1, "failed": 1, "skipped": 0,
+  "timings": { "total_ms": 120, "worst_ms": 82, "p50_ms": 41 },
+  "files": [
+    { "source": "a.docx", "success": true, "error": null,
+      "timings": { "detection_ms": 0, "probe_ms": 0, "conversion_ms": 40, "total_ms": 41 } },
+    { "source": "b.pdf", "success": false, "error": "unsupported format .pdf",
+      "timings": { "detection_ms": 0, "probe_ms": 0, "conversion_ms": 81, "total_ms": 82 } }
+  ]
+}
+```
+
+Per-file `timings.total_ms` is the measured wall clock of that file's conversion. `worst_ms` is the slowest file and
+`p50_ms` the median, both integers of milliseconds, with `total_ms >= worst_ms`. The payload carries no file content.
 
 ## Logging
 

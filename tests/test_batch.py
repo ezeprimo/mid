@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 import pytest
 
 from mid.cli import main
+from mid.models import ConvertResult
 
 
 # ---------------------------------------------------------------------------
@@ -135,8 +139,99 @@ class TestBatchBasic:
 
 
 # ===========================================================================
-# Recursive — preserve
+# JSON summary (issue #45)
 # ===========================================================================
+
+STAGE_KEYS = {"detection_ms", "probe_ms", "conversion_ms", "total_ms"}
+
+
+class TestBatchJson:
+    """`batch --json` emits a machine-readable summary on a pure stdout."""
+
+    def test_emits_pure_json_document(
+        self,
+        tmp_path: Path,
+        sample_dir: Path,
+        mock_convert_success,
+    ) -> None:
+        output = tmp_path / "out"
+        code, out, err = _run(["batch", str(sample_dir), "-o", str(output), "--json"])
+
+        assert code == 0, f"stderr: {err}"
+        payload = json.loads(out)  # stdout must be a single parsable document
+        assert "Processed:" not in out
+
+        assert payload["processed"] == 2
+        assert payload["succeeded"] == 2
+        assert payload["failed"] == 0
+        assert payload["skipped"] == 1
+
+        assert set(payload["timings"]) == {"total_ms", "worst_ms", "p50_ms"}
+        for key, value in payload["timings"].items():
+            assert isinstance(value, int), key
+            assert value >= 0, key
+
+        assert len(payload["files"]) == 2
+        assert {entry["source"] for entry in payload["files"]} == {"a.docx", "b.pdf"}
+        for entry in payload["files"]:
+            assert set(entry) == {"source", "success", "error", "timings"}
+            assert entry["success"] is True
+            assert entry["error"] is None
+            # An engine that reports no stage timings (mock or third party) must
+            # degrade to zeros, never crash or omit the keys.
+            assert set(entry["timings"]) == STAGE_KEYS
+            assert all(isinstance(v, int) and v >= 0 for v in entry["timings"].values())
+
+    def test_json_reports_failures_and_keeps_exit_code(
+        self,
+        tmp_path: Path,
+        sample_dir: Path,
+        mock_convert_failure,
+    ) -> None:
+        output = tmp_path / "out"
+        code, out, err = _run(["batch", str(sample_dir), "-o", str(output), "--json"])
+
+        assert code == 1, "batch keeps exiting 1 when a file fails, --json or not"
+        payload = json.loads(out)
+        assert payload["processed"] == 2
+        assert payload["succeeded"] == 0
+        assert payload["failed"] == 2
+        for entry in payload["files"]:
+            assert entry["success"] is False
+            assert entry["error"]
+        # Human-facing diagnostics still go to stderr, never into the document.
+        assert "error:" in err
+
+    def test_worst_and_p50_track_real_per_file_elapsed_time(
+        self,
+        tmp_path: Path,
+        sample_dir: Path,
+    ) -> None:
+        delays = {"a.docx": 0.06, "b.pdf": 0.02}
+
+        def fake_convert(path: Path, *, backend: str | None = None) -> ConvertResult:
+            time.sleep(delays[path.name])
+            return ConvertResult(
+                content="# Converted",
+                metadata={"source": path.name, "format": path.suffix.lstrip("."), "success": True},
+                success=True,
+                error=None,
+            )
+
+        output = tmp_path / "out"
+        with patch("mid.cli.convert_file", side_effect=fake_convert):
+            code, out, _err = _run(["batch", str(sample_dir), "-o", str(output), "--json"])
+
+        assert code == 0
+        payload = json.loads(out)
+        totals = {entry["source"]: entry["timings"]["total_ms"] for entry in payload["files"]}
+
+        assert totals["a.docx"] > totals["b.pdf"], totals
+        timings = payload["timings"]
+        assert timings["worst_ms"] == max(totals.values())
+        assert timings["worst_ms"] >= 55, timings
+        assert min(totals.values()) <= timings["p50_ms"] <= max(totals.values())
+        assert timings["total_ms"] >= timings["worst_ms"]
 
 
 class TestBatchRecursivePreserve:

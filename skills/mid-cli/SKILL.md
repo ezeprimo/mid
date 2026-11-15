@@ -19,6 +19,11 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 - Use `mid --list-formats` to discover supported formats at runtime.
 - When `-o` is absent, output goes to stdout; use `-o <file>` to write to file.
 - Check exit codes: 0 success, 1 conversion error, 2 argument error, 3 unsupported format.
+- `--json` prints one pure-JSON document to stdout (`convert --json` carries `timings`; `batch --json` carries
+  `processed/succeeded/failed/skipped`, `timings` with `total_ms`/`worst_ms`/`p50_ms`, and `files[]` with per-file
+  `source/success/error/timings`). All timings are integer milliseconds and the stage keys are a subset of `total_ms`.
+  With `batch --json` the human `Processed:` line is suppressed, per-file `error:` lines stay on stderr, and exit 1
+  still means at least one file failed.
 - If `mid` is not found on PATH, install via bootstrap installer.
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
 - Formats listed under `Via backend (auto-detected):` (`.odt`, `.ods`, `.odp`, `.rtf`) have no native converter but are
@@ -34,7 +39,7 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 | --- | --- |
 | `mid` not found on PATH | Install via bootstrap installer. |
 | Single file conversion | `mid convert <file> [-o <output>] [--json]` |
-| Batch directory conversion | `mid batch <input> -o <output> [--backend <name>] [--recursive --preserve\|--recursive --flatten]` |
+| Batch directory conversion | `mid batch <input> -o <output> [--backend <name>] [--recursive --preserve\|--recursive --flatten] [--json]` |
 | Check supported formats | `mid --list-formats` |
 | Need inline help | `mid help <command>` |
 | Legacy `.doc/.xls/.ppt` input | Convert via `mid convert <file> --backend libreoffice [-o <output>]`; on Windows when `mid doctor` shows `backend:office` ok, offer `mid convert <file> --backend office` for `.doc`/`.xls`/`.ppt`; only stop as unsupported if the backend is unavailable (exit 3) and no Docker legacy image is usable. Map exit 2 (unknown backend) and exit 3 (unavailable with reason). `.ppt` also exits 3 when PowerPoint already has presentations open — ask the user to close PowerPoint or fall back to `--backend libreoffice`. |
@@ -46,9 +51,10 @@ Use this skill when working with the `mid` document-to-Markdown CLI: installing 
 1. Check if `mid` is installed: `mid --version`. If found, use the system binary.
 2. If not found, install via bootstrap installer.
 3. For single file: `mid convert <file> [-o <output>] [--json]`
-4. For batch: `mid batch <dir> -o <outdir> [--backend <name>] [--recursive --preserve | --recursive --flatten]`.
+4. For batch: `mid batch <dir> -o <outdir> [--backend <name>] [--recursive --preserve | --recursive --flatten] [--json]`.
    `--backend` converts every file that backend declares and counts the rest as `Skipped`; batch never auto-routes,
    so backend-only formats (`.doc`/`.xls`/`.ppt`/`.odt`/`.ods`/`.odp`/`.rtf`) need the flag.
+   `--json` emits the machine-readable summary (with per-file and aggregate timings) instead of the human summary line.
 5. Always verify a real conversion works (not just `--help`).
 6. Use exit codes to decide next action (2 = unknown backend, 3 = unavailable backend or unsupported format).
 7. For legacy formats, prefer `--backend libreoffice` (local `soffice` on PATH or `MID_LIBREOFFICE_PATH`) or the `mid:legacy` Docker image; see Legacy Backends.
