@@ -10,14 +10,17 @@ Exit codes
 
 import argparse
 import json
+import statistics
 import sys
+import time
 from pathlib import Path
 
 import logging
 
 from mid import __version__
-from mid.engine import REGISTRY, convert_file, resolve_converter
+from mid.engine import REGISTRY, TIMINGS_KEY, convert_file, resolve_converter
 from mid.logging_setup import setup_logging
+from mid.models import ConvertResult
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,11 @@ def setup_parser() -> argparse.ArgumentParser:
     bat.add_argument("--preserve", action="store_true", help="preserve directory structure in output")
     bat.add_argument("--backend", help="backend to use for conversion")
     bat.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a JSON conversion summary with per-stage timings to stdout",
+    )
+    bat.add_argument(
         "-v",
         "--verbose",
         dest="verbose",
@@ -160,11 +168,107 @@ def _exit_conv(msg: str) -> None:
     sys.exit(1)
 
 
+# -- timings (issue #45) ---------------------------------------------------
+
+STAGE_KEYS: tuple[str, ...] = ("detection_ms", "probe_ms", "conversion_ms")
+
+
+def _elapsed_ms(started: float) -> int:
+    """Return whole milliseconds elapsed since a ``perf_counter`` value."""
+    return max(int((time.perf_counter() - started) * 1000), 0)
+
+
+def _as_ms(value: object) -> int:
+    """Coerce one stage value to a non-negative integer of milliseconds."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return max(int(value), 0)
+
+
+def _take_stage_timings(result: ConvertResult) -> dict[str, int]:
+    """Pop the engine's private stage timings and normalise them.
+
+    Popping keeps the private key out of every payload. An engine that stamps
+    nothing (a mock or a third party) degrades to zeros, so the keys are always
+    present and never a crash.
+    """
+    raw = result.metadata.pop(TIMINGS_KEY, None) if isinstance(result.metadata, dict) else None
+    stages = raw if isinstance(raw, dict) else {}
+    return {key: _as_ms(stages.get(key)) for key in STAGE_KEYS}
+
+
+def _convert_timings(result: ConvertResult, *, started: float, cli_probe_ms: int = 0) -> dict[str, int]:
+    """Build the ``timings`` object for ``convert --json``.
+
+    ``total_ms`` is the CLI's clock over the whole command, so it bounds the
+    stages rather than equalling their sum. The CLI's own probe time is added
+    to ``probe_ms``, which therefore covers every probe the command paid for.
+    """
+    timings = _take_stage_timings(result)
+    timings["probe_ms"] += cli_probe_ms
+    timings["total_ms"] = _elapsed_ms(started)
+    return timings
+
+
+def _local_convert_timings(*, started: float, conversion_started: float) -> dict[str, int]:
+    """Measure the stages of a conversion the CLI drives itself.
+
+    The native path calls the converter directly instead of going through
+    ``engine.convert_file``, so nothing else stamps its stages.
+    """
+    return {
+        "detection_ms": max(int((conversion_started - started) * 1000), 0),
+        "probe_ms": 0,
+        "conversion_ms": max(int((time.perf_counter() - conversion_started) * 1000), 0),
+        "total_ms": _elapsed_ms(started),
+    }
+
+
+def _file_entry(
+    path: Path,
+    *,
+    success: bool,
+    error: str | None,
+    timings: dict[str, int],
+) -> dict:
+    """Build one ``files[]`` entry for ``batch --json`` (no content)."""
+    return {"source": path.name, "success": success, "error": error, "timings": timings}
+
+
+def _print_json_summary(
+    *,
+    processed: int,
+    succeeded: int,
+    failed: int,
+    skipped: int,
+    entries: list[dict],
+    started: float,
+) -> None:
+    """Print the ``batch --json`` document — the only stdout write in that mode."""
+    totals = [entry["timings"]["total_ms"] for entry in entries]
+    summary = {
+        "processed": processed,
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+        "timings": {
+            # The whole run bounds its worst single file.
+            "total_ms": _elapsed_ms(started),
+            "worst_ms": max(totals) if totals else 0,
+            "p50_ms": int(statistics.median(totals)) if totals else 0,
+        },
+        "files": entries,
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
 # -- convert handler -------------------------------------------------------
 
 
 def handler_convert(args: argparse.Namespace) -> None:
     """Handle ``mid convert``."""
+    started = time.perf_counter()
+
     if args.file is None:
         _exit_arg("argument FILE is required")
 
@@ -202,7 +306,9 @@ def handler_convert(args: argparse.Namespace) -> None:
         # Explicit --backend selection is consent to probe, including opt-in backends.
         # Auto-routing probes too: the cache only stores available=True, so a
         # cached-only lookup would never route on a fresh process.
+        probe_started = time.perf_counter()
         avail = b.is_available(refresh=True)
+        cli_probe_ms = _elapsed_ms(probe_started)
         if not avail.available:
             reason = avail.reason or "unavailable"
             if auto_routed:
@@ -232,6 +338,7 @@ def handler_convert(args: argparse.Namespace) -> None:
                     "success": True,
                 },
                 "error": None,
+                "timings": _convert_timings(result, started=started, cli_probe_ms=cli_probe_ms),
             }
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif getattr(args, "output", None):
@@ -263,6 +370,7 @@ def handler_convert(args: argparse.Namespace) -> None:
     converter = converter_cls()
     logger.debug("resolved converter %s for %s", converter_cls.__name__, path.name)
     is_legacy = isinstance(converter, LegacyPlaceholder)
+    conversion_started = time.perf_counter()
     result = converter.convert(path)
     logger.info(
         "conversion %s: %s",
@@ -285,6 +393,7 @@ def handler_convert(args: argparse.Namespace) -> None:
                 "success": True,
             },
             "error": None,
+            "timings": _local_convert_timings(started=started, conversion_started=conversion_started),
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     elif args.output:
@@ -303,6 +412,8 @@ def handler_convert(args: argparse.Namespace) -> None:
 
 def handler_batch(args: argparse.Namespace) -> None:
     """Handle ``mid batch`` -- convert all supported files in a directory."""
+    started = time.perf_counter()
+
     if args.input is None:
         _exit_arg("argument INPUT_DIR is required")
 
@@ -314,6 +425,7 @@ def handler_batch(args: argparse.Namespace) -> None:
         _exit_arg("-o / --output is required for batch mode")
 
     output_dir = Path(args.output)
+    json_output = getattr(args, "json", False)
 
     # Pre-validate: output must not be an existing file
     if output_dir.exists() and not output_dir.is_dir():
@@ -375,6 +487,7 @@ def handler_batch(args: argparse.Namespace) -> None:
     processed = len(supported)
     succeeded = 0
     failed = 0
+    file_entries: list[dict] = []
 
     # Create output directory with error handling
     try:
@@ -386,7 +499,12 @@ def handler_batch(args: argparse.Namespace) -> None:
     used_names: set[str] = set()
 
     for file_path in supported:
+        conversion_started = time.perf_counter()
         result = convert_file(file_path, backend=backend_name)
+        # Per-file total is the CLI's clock around the call: a mocked or
+        # third-party engine stamps no stages, so it can never be their sum.
+        per_file_timings = _take_stage_timings(result)
+        per_file_timings["total_ms"] = _elapsed_ms(conversion_started)
 
         if result.success:
             # Determine output path
@@ -394,6 +512,14 @@ def handler_batch(args: argparse.Namespace) -> None:
                 rel = file_path.relative_to(input_dir) if args.recursive else file_path
             except ValueError:
                 print(f"error: {file_path.name}: path is outside input directory, skipping", file=sys.stderr)
+                file_entries.append(
+                    _file_entry(
+                        file_path,
+                        success=False,
+                        error="path is outside input directory",
+                        timings=per_file_timings,
+                    )
+                )
                 failed += 1
                 continue
 
@@ -408,6 +534,14 @@ def handler_batch(args: argparse.Namespace) -> None:
                     rel_parent = file_path.relative_to(input_dir).parent
                 except ValueError:
                     print(f"error: {file_path.name}: path is outside input directory, skipping", file=sys.stderr)
+                    file_entries.append(
+                        _file_entry(
+                            file_path,
+                            success=False,
+                            error="path is outside input directory",
+                            timings=per_file_timings,
+                        )
+                    )
                     failed += 1
                     continue
                 parent_prefix = "-".join(p for p in rel_parent.parts if p != ".")
@@ -444,16 +578,38 @@ def handler_batch(args: argparse.Namespace) -> None:
 
             try:
                 out.write_text(result.content, encoding="utf-8")
+                file_entries.append(_file_entry(file_path, success=True, error=None, timings=per_file_timings))
                 succeeded += 1
             except OSError as exc:
                 print(f"error: {file_path.name}: could not write output '{out}': {exc}", file=sys.stderr)
+                file_entries.append(
+                    _file_entry(
+                        file_path,
+                        success=False,
+                        error=f"could not write output '{out}': {exc}",
+                        timings=per_file_timings,
+                    )
+                )
                 failed += 1
         else:
             msg = result.error or "unknown error"
             print(f"error: {file_path.name}: {msg}", file=sys.stderr)
+            file_entries.append(_file_entry(file_path, success=False, error=msg, timings=per_file_timings))
             failed += 1
 
-    print(f"Processed: {processed}, Succeeded: {succeeded}, Failed: {failed}, Skipped: {skipped}")
+    if json_output:
+        # Pure stdout in this mode: the human summary line is gone, but every
+        # per-file diagnostic above still went to stderr.
+        _print_json_summary(
+            processed=processed,
+            succeeded=succeeded,
+            failed=failed,
+            skipped=skipped,
+            entries=file_entries,
+            started=started,
+        )
+    else:
+        print(f"Processed: {processed}, Succeeded: {succeeded}, Failed: {failed}, Skipped: {skipped}")
     if failed:
         sys.exit(1)
 
