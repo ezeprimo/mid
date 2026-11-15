@@ -322,10 +322,13 @@ def handler_convert(args: argparse.Namespace) -> None:
                 sys.exit(3)
             print(f"error: backend '{backend_name}' unavailable: {reason}", file=sys.stderr)
             sys.exit(3)
-        # delegate to backend via engine
+        # delegate to backend via engine. An explicit --backend already probed
+        # above, so the proven Availability is handed over: probing here again
+        # would pay for the probe twice (#70). The auto-routed path keeps its
+        # own separate probe — out of scope for this issue.
         from mid.engine import convert_file as cf
 
-        result = cf(path, backend=backend_name)
+        result = cf(path, backend=backend_name, availability=None if auto_routed else avail)
         if not result.success:
             # Backend-declared exit code (issue #41 S4: converting a .ppt while
             # PowerPoint already has presentations open aborts with 3). Only a
@@ -454,6 +457,7 @@ def handler_batch(args: argparse.Namespace) -> None:
     # invalid or unavailable backend processes nothing and creates no output dir.
     backend_name = getattr(args, "backend", None)
     backend = None
+    backend_availability = None
     if backend_name is not None:
         from mid.backends.registry import registry
 
@@ -507,7 +511,9 @@ def handler_batch(args: argparse.Namespace) -> None:
 
     for file_path in supported:
         conversion_started = time.perf_counter()
-        result = convert_file(file_path, backend=backend_name)
+        # The pre-flight above already proved availability: handing it over keeps
+        # this to one probe for the whole batch instead of one per file (#70).
+        result = convert_file(file_path, backend=backend_name, availability=backend_availability)
         # Per-file total is the CLI's clock around the call: a mocked or
         # third-party engine stamps no stages, so it can never be their sum.
         per_file_timings = _take_stage_timings(result)

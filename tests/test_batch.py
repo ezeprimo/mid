@@ -209,7 +209,7 @@ class TestBatchJson:
     ) -> None:
         delays = {"a.docx": 0.06, "b.pdf": 0.02}
 
-        def fake_convert(path: Path, *, backend: str | None = None) -> ConvertResult:
+        def fake_convert(path: Path, *, backend: str | None = None, availability: object = None) -> ConvertResult:
             time.sleep(delays[path.name])
             return ConvertResult(
                 content="# Converted",
@@ -719,3 +719,105 @@ class TestBatchBackend:
         # Auto-routing in batch is out of scope for #40: without the flag these
         # stay skipped rather than silently changing the count semantics.
         assert "Skipped: 2" in out
+
+
+# ===========================================================================
+# Single probe on `batch --backend` (issue #70)
+# ===========================================================================
+
+
+class CountingBatchBackend:
+    """Probe-counting backend for the batch pre-flight (#70)."""
+
+    def make(self, *, available: bool = True, reason: str | None = None):
+        from datetime import datetime, timezone
+
+        from mid.backends.base import Availability, Backend
+        from mid.models import ConvertResult as _ConvertResult
+
+        class _Counting(Backend):
+            def __init__(self) -> None:
+                super().__init__()
+                self.name = "counting"
+                self.display_name = "Counting"
+                self.supported_extensions = frozenset({".odt"})
+                self.required_tools = tuple()
+                self.probe_calls = 0
+                self.convert_calls: list[Path] = []
+
+            def probe(self) -> Availability:
+                self.probe_calls += 1
+                return Availability(
+                    available=available,
+                    version="7.6",
+                    tool_path="/usr/bin/soffice",
+                    reason=reason,
+                    checked_at=datetime.now(timezone.utc),
+                )
+
+            def convert(self, path: Path) -> _ConvertResult:
+                self.convert_calls.append(path)
+                return _ConvertResult(content=f"# {path.stem}", metadata={}, success=True, error=None)
+
+        return _Counting()
+
+
+@pytest.fixture
+def counting_backend():
+    """Register a probe-counting backend in an emptied registry."""
+    from mid.backends.registry import registry
+
+    helper = CountingBatchBackend()
+    original = list(registry.list_all())
+    registry.clear()
+
+    def register(**kwargs):
+        backend = helper.make(**kwargs)
+        registry.register(backend)
+        return backend
+
+    yield register
+
+    registry.clear()
+    for backend in original:
+        registry.register(backend)
+
+
+class TestBatchBackendSingleProbe:
+    """`batch --backend` probes once for the whole run, never per file (#70)."""
+
+    def test_probes_once_for_two_files(self, counting_backend, tmp_path: Path) -> None:
+        backend = counting_backend(available=True)
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "one.odt").write_text("one", encoding="utf-8")
+        (input_dir / "two.odt").write_text("two", encoding="utf-8")
+        (input_dir / "notes.txt").write_text("skip", encoding="utf-8")
+        output = tmp_path / "out"
+
+        code, out, err = _run(["batch", str(input_dir), "-o", str(output), "--backend", "counting"])
+
+        assert code == 0, f"stderr: {err}"
+        assert err == ""
+        assert out == "Processed: 2, Succeeded: 2, Failed: 0, Skipped: 1\n"
+        assert backend.probe_calls == 1
+        assert len(backend.convert_calls) == 2
+        assert (output / "one.md").read_text(encoding="utf-8") == "# one"
+        assert (output / "two.md").read_text(encoding="utf-8") == "# two"
+
+    def test_unavailable_probes_once_exits_3_and_creates_no_output_dir(self, counting_backend, tmp_path: Path) -> None:
+        backend = counting_backend(available=False, reason="soffice missing")
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "one.odt").write_text("one", encoding="utf-8")
+        output = tmp_path / "out"
+
+        code, out, err = _run(["batch", str(input_dir), "-o", str(output), "--backend", "counting"])
+
+        assert code == 3
+        assert out == ""
+        assert err == "error: backend 'counting' unavailable: soffice missing\n"
+        assert backend.probe_calls == 1
+        assert backend.convert_calls == []
+        # #40 regression guard: the pre-flight runs before the output dir exists.
+        assert not output.exists()
