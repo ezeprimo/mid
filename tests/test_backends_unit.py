@@ -412,3 +412,87 @@ class TestFrozenToolEnvironment:
         assert detection.run_version(["/usr/bin/soffice", "--version"]) == "7.6.0"
         # A source install must respect a deliberate LD_LIBRARY_PATH.
         assert captured.get("env") is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #70 — a caller that already probed can hand the result to the engine
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def probe_registry():
+    """Register backends in the global registry and restore it afterwards."""
+    from mid.backends.registry import registry
+
+    original = list(registry.list_all())
+    registry.clear()
+    yield registry
+    registry.clear()
+    for backend in original:
+        registry.register(backend)
+
+
+class TestConvertFileAvailability:
+    """`engine.convert_file` probes once on its own, never when handed a fact."""
+
+    def _source(self, tmp_path: Path) -> Path:
+        src = tmp_path / "legacy.doc"
+        src.write_bytes(b"payload")
+        return src
+
+    def test_without_availability_probes_once(self, probe_registry, tmp_path: Path) -> None:
+        """The library path keeps probing for itself: exactly one probe."""
+        from mid.engine import convert_file
+
+        backend = FakeBackend(name="lib-probe", supported_extensions=frozenset({".doc"}))
+        probe_registry.register(backend)
+
+        result = convert_file(self._source(tmp_path), backend="lib-probe")
+
+        assert result.success is True
+        assert result.content == "fake md"
+        # No caller probed, so the engine's own measurement must cover the probe.
+        assert backend.probe_calls == 1
+        assert result.metadata["_timings"].keys() == {"detection_ms", "probe_ms", "conversion_ms"}
+
+    def test_with_availability_probes_zero_times(self, probe_registry, tmp_path: Path) -> None:
+        """An availability already proven is reused, never re-probed."""
+        from mid.engine import convert_file
+
+        backend = FakeBackend(name="lib-avail", supported_extensions=frozenset({".doc"}))
+        probe_registry.register(backend)
+        proven = Availability(
+            available=True,
+            version="1.0",
+            tool_path="/bin/fake",
+            reason=None,
+            checked_at=datetime.now(timezone.utc),
+        )
+
+        result = convert_file(self._source(tmp_path), backend="lib-avail", availability=proven)
+
+        assert result.success is True
+        assert result.content == "fake md"
+        assert backend.probe_calls == 0
+        # Nothing was measured here, so the stage is a present zero, not missing.
+        assert result.metadata["_timings"]["probe_ms"] == 0
+
+    def test_unavailable_availability_skips_the_probe_and_fails(self, probe_registry, tmp_path: Path) -> None:
+        """A caller-proven negative is honoured without probing or converting."""
+        from mid.engine import convert_file
+
+        backend = FakeBackend(name="lib-down", supported_extensions=frozenset({".doc"}))
+        probe_registry.register(backend)
+        proven = Availability(
+            available=False,
+            version=None,
+            tool_path=None,
+            reason="tool missing",
+            checked_at=datetime.now(timezone.utc),
+        )
+
+        result = convert_file(self._source(tmp_path), backend="lib-down", availability=proven)
+
+        assert result.success is False
+        assert result.error == "tool missing"
+        assert backend.probe_calls == 0

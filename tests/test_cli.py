@@ -7,6 +7,7 @@ import importlib.util
 import sys
 import time
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -14,7 +15,10 @@ from unittest.mock import patch
 import pytest
 
 from mid import __version__
+from mid.backends.base import Availability, Backend
+from mid.backends.registry import registry
 from mid.cli import main
+from mid.models import ConvertResult
 
 
 # ---------------------------------------------------------------------------
@@ -450,3 +454,110 @@ class TestListFormatsWithSubcommand:
         code, out, err = _run(["--list-formats", "convert"])
         assert code == 0
         assert "Supported:" in out
+
+
+# ===========================================================================
+# Single probe on an explicit --backend (issue #70)
+# ===========================================================================
+
+
+class CountingBackend(Backend):
+    """Declares .doc/.odt and counts probes so a double probe is observable."""
+
+    def __init__(self, *, available: bool = True, reason: str | None = None, probe_delay: float = 0.0) -> None:
+        super().__init__()
+        self.name = "counting"
+        self.display_name = "Counting"
+        self.supported_extensions = frozenset({".doc", ".odt"})
+        self.required_tools = tuple()
+        self.probe_calls = 0
+        self.convert_calls: list[Path] = []
+        self._available = available
+        self._reason = reason
+        self._probe_delay = probe_delay
+
+    def probe(self) -> Availability:
+        self.probe_calls += 1
+        if self._probe_delay:
+            time.sleep(self._probe_delay)
+        return Availability(
+            available=self._available,
+            version="7.6",
+            tool_path="/usr/bin/soffice",
+            reason=self._reason,
+            checked_at=datetime.now(timezone.utc),
+        )
+
+    def convert(self, path: Path) -> ConvertResult:
+        self.convert_calls.append(path)
+        return ConvertResult(content="# from fake backend", metadata={}, success=True, error=None)
+
+
+@pytest.fixture
+def probe_registry():
+    """Empty registry that restores the built-ins afterwards."""
+    original = list(registry.list_all())
+    registry.clear()
+    yield registry
+    registry.clear()
+    for backend in original:
+        registry.register(backend)
+
+
+class TestConvertBackendSingleProbe:
+    """`convert --backend` must probe exactly once (#70)."""
+
+    def test_explicit_backend_probes_once(self, probe_registry, tmp_path: Path) -> None:
+        backend = CountingBackend()
+        probe_registry.register(backend)
+        src = tmp_path / "legacy.odt"
+        src.write_bytes(b"payload")
+
+        code, out, err = _run(["convert", str(src), "--backend", "counting"])
+
+        assert code == 0, f"stderr: {err}"
+        assert out == "# from fake backend\n"
+        assert err == ""
+        assert backend.probe_calls == 1
+        assert backend.convert_calls == [src]
+
+    def test_unavailable_backend_exits_3_after_a_single_probe(self, probe_registry, tmp_path: Path) -> None:
+        backend = CountingBackend(available=False, reason="soffice missing")
+        probe_registry.register(backend)
+        src = tmp_path / "legacy.odt"
+        src.write_bytes(b"payload")
+
+        code, out, err = _run(["convert", str(src), "--backend", "counting"])
+
+        assert code == 3
+        assert out == ""
+        assert err == "error: backend 'counting' unavailable: soffice missing\n"
+        assert backend.probe_calls == 1
+        assert backend.convert_calls == []
+
+    def test_json_reports_the_single_probe_in_timings(self, probe_registry, tmp_path: Path) -> None:
+        # A slow probe keeps `probe_ms` safely above the 1 ms truncation floor.
+        backend = CountingBackend(probe_delay=0.05)
+        probe_registry.register(backend)
+        src = tmp_path / "legacy.odt"
+        src.write_bytes(b"payload")
+
+        code, out, err = _run(["convert", str(src), "--backend", "counting", "--json"])
+
+        assert code == 0, f"stderr: {err}"
+        payload = json.loads(out)
+        assert payload["content"] == "# from fake backend"
+        assert backend.probe_calls == 1
+
+        timings = payload["timings"]
+        assert set(timings) == {"detection_ms", "probe_ms", "conversion_ms", "total_ms"}
+        for key, value in timings.items():
+            assert isinstance(value, int), f"{key} must be an integer of milliseconds"
+            assert not isinstance(value, bool)
+            assert value >= 0
+
+        # The engine no longer probes on this path, so the CLI's own measurement
+        # is the only thing that can make probe_ms non-zero.
+        assert timings["probe_ms"] >= 20, timings
+        stages = timings["detection_ms"] + timings["probe_ms"] + timings["conversion_ms"]
+        assert stages <= timings["total_ms"], timings

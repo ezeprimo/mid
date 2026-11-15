@@ -3,10 +3,16 @@
 import logging
 import time
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from mid.converters import Converter, LegacyPlaceholder, MarkitDownConverter
 from mid.models import ConvertResult
+
+if TYPE_CHECKING:
+    # Type-only: importing ``mid.backends.base`` for real would trigger the
+    # backends package ``__init__`` (and its registration side effects) at
+    # engine import time, so backend modules stay lazily imported here.
+    from mid.backends.base import Availability
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +130,12 @@ def _stamp_timings(
     return result
 
 
-def convert_file(path: Path, *, backend: str | None = None) -> ConvertResult:
+def convert_file(
+    path: Path,
+    *,
+    backend: str | None = None,
+    availability: "Availability | None" = None,
+) -> ConvertResult:
     """Convert a single file to Markdown.
 
     This is a convenience wrapper around ``resolve_converter`` +
@@ -134,11 +145,20 @@ def convert_file(path: Path, *, backend: str | None = None) -> ConvertResult:
     Args:
         path: Path to the file to convert.
         backend: Optional backend name. When set, delegates to that backend.
+        availability: Optional already obtained ``Availability`` for
+            ``backend``. A caller that had to probe anyway (the CLI gate on an
+            explicit ``--backend``) passes it here so the probe is paid once
+            instead of twice. It carries the fact "already proven" rather than
+            a bare boolean a caller could set wrongly, and the never-raise
+            contract stays in ``Backend.is_available``. When ``None`` — the
+            library path — this function probes for itself exactly as before.
 
     Returns:
         A ``ConvertResult`` — check ``.success`` to determine outcome. Its
         ``metadata`` carries the private ``_timings`` key with the
         ``detection_ms``/``probe_ms``/``conversion_ms`` stages measured here.
+        ``probe_ms`` is ``0`` when ``availability`` was supplied: nothing was
+        probed here, and the caller's own measurement covers that stage.
     """
     started = time.perf_counter()
 
@@ -163,18 +183,25 @@ def convert_file(path: Path, *, backend: str | None = None) -> ConvertResult:
                 conversion_s=0.0,
             )
         probe_started = time.perf_counter()
-        try:
-            # Explicit backend= selection is consent to probe, including opt-in backends.
-            avail = b.is_available(refresh=True)
-        except Exception as exc:  # never-raise
-            logger.info("backend '%s' probe raised: %s", backend, exc)
-            return _stamp_timings(
-                ConvertResult(content="", metadata={}, success=False, error=str(exc)),
-                detection_s=detection_s,
-                probe_s=time.perf_counter() - probe_started,
-                conversion_s=0.0,
-            )
-        probe_s = time.perf_counter() - probe_started
+        if availability is not None:
+            # The caller already paid for the probe (#70): probing again with
+            # refresh=True would double it (two COM opens, up to 2x the probe
+            # budget per file). The stage is a measured zero, not a guess.
+            avail = availability
+            probe_s = time.perf_counter() - probe_started
+        else:
+            try:
+                # Explicit backend= selection is consent to probe, including opt-in backends.
+                avail = b.is_available(refresh=True)
+            except Exception as exc:  # never-raise
+                logger.info("backend '%s' probe raised: %s", backend, exc)
+                return _stamp_timings(
+                    ConvertResult(content="", metadata={}, success=False, error=str(exc)),
+                    detection_s=detection_s,
+                    probe_s=time.perf_counter() - probe_started,
+                    conversion_s=0.0,
+                )
+            probe_s = time.perf_counter() - probe_started
         if not avail.available:
             reason = avail.reason or "unavailable"
             logger.info("backend '%s' unavailable: %s", backend, reason)
