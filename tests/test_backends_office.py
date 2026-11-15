@@ -1,7 +1,8 @@
 """Unit tests for OfficeBackend — strict TDD for OFFICE-01..06.
 
-v1 scope (maintainer decision): Word/Excel ONLY (.doc/.xls). .ppt stays on
-the LegacyPlaceholder migrate-first path, deferred post-v1.
+Scope: Word/Excel/PowerPoint (.doc/.xls/.ppt) via per-app DispatchEx (#41).
+PowerPoint is single-instance, so the backend refuses an instance that already
+has open presentations (exit 3, never Quit/kill) — S4.
 
 Kill scope (maintainer decision): PID-scoped via GetWindowThreadProcessId.
 taskkill /IM constrained to the allowlisted Office exes is fallback only.
@@ -66,7 +67,7 @@ def test_killer_argv_exe_allowlist_only(tmp_path):
     """Exe fallback is constrained to the allowlist; user paths never run."""
     from mid.backends.office import _ALLOWED_EXES, _default_killer
 
-    assert _ALLOWED_EXES == frozenset({"WINWORD.EXE", "EXCEL.EXE"})
+    assert _ALLOWED_EXES == frozenset({"WINWORD.EXE", "EXCEL.EXE", "POWERPNT.EXE"})
     evil = str(tmp_path / "evil.exe")
     with patch.dict(os.environ, {"MID_OFFICE_PATH": evil}):
         with patch("mid.backends.office.subprocess.run") as mock_run:
@@ -155,17 +156,20 @@ def test_bad_path_fallthrough(win32, com_stub, tmp_path):
 # --- OFFICE-01: identity ------------------------------------------------------
 
 
-def test_office_identity_word_excel_only():
-    """v1 = Word/Excel ONLY; .ppt deferred post-v1 (maintainer decision)."""
+def test_office_identity_word_excel_powerpoint():
+    """Scope is .doc/.xls/.ppt — one per-app COM server each (#41)."""
     from mid.backends.office import PROGIDS, OfficeBackend
 
     assert OfficeBackend.name == "office"
     assert OfficeBackend.opt_in is True
-    assert OfficeBackend.supported_extensions == frozenset({".doc", ".xls"})
-    assert set(PROGIDS) == {".doc", ".xls"}
-    assert PROGIDS[".doc"][0] == "Word.Application"
-    assert PROGIDS[".xls"][0] == "Excel.Application"
-    assert ".ppt" not in OfficeBackend.supported_extensions
+    assert OfficeBackend.supported_extensions == frozenset({".doc", ".xls", ".ppt"})
+    assert set(PROGIDS) == {".doc", ".xls", ".ppt"}
+    assert PROGIDS[".doc"] == ("Word.Application", "WINWORD.EXE", 12)
+    assert PROGIDS[".xls"] == ("Excel.Application", "EXCEL.EXE", 51)
+    assert PROGIDS[".ppt"] == ("PowerPoint.Application", "POWERPNT.EXE", 24)
+    assert OfficeBackend.required_tools == ("WINWORD.EXE", "EXCEL.EXE", "POWERPNT.EXE")
+    assert ".pptx" not in OfficeBackend.supported_extensions, "native MarkItDown handles .pptx"
+    assert ".pps" not in OfficeBackend.supported_extensions
 
 
 def test_office_registration_win32_only(win32, com_stub):
@@ -654,23 +658,146 @@ def test_convert_unsupported_and_missing():
     assert "file not found" in (r.error or "").lower()
 
 
-def test_convert_ppt_deferred_to_legacy(tmp_path):
-    """.ppt is NOT claimed by office v1 (deferred post-v1)."""
-    b = _backend()
-    p = tmp_path / "deck.ppt"
-    p.write_text("x", encoding="utf-8")
-    r = b.convert(p)
-    assert r.success is False
-    assert "unsupported format" in (r.error or "").lower()
+# --- PowerPoint (.ppt) COM branch (#41) ---------------------------------------
+
+
+class _FakePresentation:
+    """Double for a PowerPoint ``Presentation`` returned by ``Presentations.Open``."""
+
+    def __init__(self) -> None:
+        self.saveas_calls: list[tuple] = []
+        self.close_calls = 0
+
+    def SaveAs(self, filename, *args, **kwargs):
+        self.saveas_calls.append((str(filename), args, kwargs))
+        Path(filename).write_bytes(b"PK\x03\x04")
+
+    def Close(self, *args, **kwargs):
+        self.close_calls += 1
+
+
+class _FakePresentations:
+    """Double for ``PowerPoint.Application.Presentations`` — records every call."""
+
+    def __init__(self, open_count: int = 0) -> None:
+        self.Count = open_count
+        self.open_calls: list[tuple] = []
+        self.opened: list[_FakePresentation] = []
+
+    def Open(self, filename, *args, **kwargs):
+        self.open_calls.append((str(filename), args, kwargs))
+        pres = _FakePresentation()
+        self.opened.append(pres)
+        return pres
+
+
+class _FakePowerPointApp:
+    """PowerPoint.Application double that fails loudly on ``ActivePresentation``."""
+
+    def __init__(self, open_count: int = 0) -> None:
+        self.Presentations = _FakePresentations(open_count)
+        self.quit_calls = 0
+
+    def Quit(self) -> None:
+        self.quit_calls += 1
+
+    @property
+    def ActivePresentation(self):
+        raise AssertionError("app.ActivePresentation must never be accessed — WithWindow=False leaves no active presentation")
+
+
+def _saveas_format(call: tuple):
+    """Effective FileFormat of a recorded SaveAs call (positional or keyword)."""
+    _, args, kwargs = call
+    if "FileFormat" in kwargs:
+        return kwargs["FileFormat"]
+    return args[0] if args else None
+
+
+def test_convert_ppt_uses_powerpoint_com(tmp_path):
+    """`.ppt` goes DispatchEx -> windowless Open -> SaveAs 24 (.pptx) -> Close -> Quit."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "deck.ppt"
+    src.write_text("x", encoding="utf-8")
+    app = _FakePowerPointApp(open_count=0)
+    progids: list[str] = []
+
+    def factory(progid):
+        progids.append(progid)
+        return app
+
+    killer = MagicMock()
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", factory):
+            with patch.object(office_mod, "_KILLER", killer):
+                mock_md = MagicMock()
+                mock_md.convert.return_value = MagicMock(success=True, content="# Slide 1", error=None)
+                with patch("mid.converters.markitdown.MarkitDownConverter", return_value=mock_md):
+                    result = office_mod.OfficeBackend().convert(src)
+
+    assert result.success is True
+    assert result.exit_code is None
+    assert "# Slide 1" in result.content
+    assert progids == ["PowerPoint.Application"]
+    presentations = app.Presentations
+    assert len(presentations.open_calls) == 1, "Presentations.Open must run exactly once"
+    _, open_args, open_kwargs = presentations.open_calls[0]
+    assert open_args == () or all(a in (True, False, 0) for a in open_args)
+    assert open_kwargs.get("ReadOnly") is True
+    assert not open_kwargs.get("WithWindow"), "WithWindow=False is what makes this safe (no active presentation)"
+    assert not open_kwargs.get("Untitled")
+    pres = presentations.opened[0]
+    assert len(pres.saveas_calls) == 1
+    target = pres.saveas_calls[0][0]
+    assert target.endswith(".pptx"), "SaveAs 24 writes a .pptx MarkItDown can read"
+    assert _saveas_format(pres.saveas_calls[0]) == 24
+    assert pres.close_calls == 1
+    assert app.quit_calls == 1, "an instance that was empty when taken is mid's own — Quit is allowed"
+    assert not killer.called
+    assert Path(mock_md.convert.call_args[0][0]).suffix == ".pptx"
+
+
+def test_convert_ppt_shared_instance_aborts_with_exit_3(tmp_path):
+    """S4: a PowerPoint instance with open presentations is never touched."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "deck.ppt"
+    src.write_text("x", encoding="utf-8")
+    app = _FakePowerPointApp(open_count=1)
+    killer = MagicMock()
+    md_factory = MagicMock()
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", lambda progid: app):
+            with patch.object(office_mod, "_KILLER", killer):
+                with patch("mid.converters.markitdown.MarkitDownConverter", md_factory):
+                    result = office_mod.OfficeBackend().convert(src)
+
+    assert result.success is False
+    assert result.content == ""
+    assert result.exit_code == 3, "shared-instance abort maps to exit 3 (S4/D6)"
+    # Nothing was opened, saved, closed, quit or killed.
+    assert app.Presentations.open_calls == []
+    assert app.Presentations.opened == []
+    assert app.quit_calls == 0, "Quit is forbidden on an instance mid did not start"
+    assert not killer.called, "the PID killer is forbidden on a shared instance"
+    assert not md_factory.called
+    err = (result.error or "").lower()
+    assert "powerpoint" in err
+    assert "1 open presentation" in err
+    assert "--backend libreoffice" in err
+    assert "single-instance" in err
 
 
 def test_intermediate_format_constants():
-    """OOXML intermediate: .doc -> docx/12, .xls -> xlsx/51 (macro-free)."""
+    """OOXML intermediate: .doc -> docx/12, .xls -> xlsx/51, .ppt -> pptx/24."""
     from mid.backends.office import _INTERMEDIATE_EXT, PROGIDS
 
     assert PROGIDS[".doc"] == ("Word.Application", "WINWORD.EXE", 12)
     assert PROGIDS[".xls"] == ("Excel.Application", "EXCEL.EXE", 51)
-    assert _INTERMEDIATE_EXT == {".doc": ".docx", ".xls": ".xlsx"}
+    assert PROGIDS[".ppt"] == ("PowerPoint.Application", "POWERPNT.EXE", 24)
+    assert _INTERMEDIATE_EXT == {".doc": ".docx", ".xls": ".xlsx", ".ppt": ".pptx"}
 
 
 def test_html_helpers_removed():
@@ -1101,6 +1228,196 @@ def test_convert_xls_merged_headers_forward_filled(tmp_path):
     assert any(re.fullmatch(r"[|\s]+", line) and line.count("|") >= 6 for line in r.content.splitlines())
 
 
+# --- Exit-code plumbing for the shared-instance guard (S4/D6) -------------------
+
+
+def _office_available():
+    """Availability payload for a Windows host with Office installed."""
+    from datetime import datetime, timezone
+
+    from mid.backends.base import Availability
+
+    return Availability(
+        available=True,
+        version="15.0",
+        tool_path="C:/Office/POWERPNT.EXE",
+        reason=None,
+        checked_at=datetime.now(timezone.utc),
+    )
+
+
+def _run_cli(argv: list[str]):
+    """Invoke ``mid`` with *argv*; return the exit code (``None`` when no exit)."""
+    import sys as _sys
+
+    from mid.cli import main
+
+    with patch.object(_sys, "argv", ["mid", *argv]):
+        try:
+            main()
+        except SystemExit as exc:
+            return exc.code
+    return None
+
+
+def _with_office_backend(office_mod):
+    """Register a probed-available office backend and yield the shared registry."""
+    import contextlib
+
+    from mid.backends.registry import registry
+
+    @contextlib.contextmanager
+    def _swap():
+        original = list(registry.list_all())
+        registry.clear()
+        registry.register(office_mod.OfficeBackend())
+        try:
+            yield registry
+        finally:
+            registry.clear()
+            for b in original:
+                try:
+                    registry.register(b)
+                except ValueError:
+                    pass
+
+    return _swap()
+
+
+def test_cli_ppt_shared_instance_exits_3(tmp_path, capsys):
+    """`mid convert --backend office deck.ppt` exits 3 for the shared-instance guard."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "deck.ppt"
+    src.write_text("x", encoding="utf-8")
+    app = _FakePowerPointApp(open_count=2)
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod.OfficeBackend, "probe", return_value=_office_available()):
+            with patch.object(office_mod, "_COM_FACTORY", lambda progid: app):
+                with patch.object(office_mod, "_KILLER", MagicMock()):
+                    with _with_office_backend(office_mod):
+                        code = _run_cli(["convert", str(src), "--backend", "office"])
+
+    assert code == 3
+    err = capsys.readouterr().err.lower()
+    assert "powerpoint" in err
+    assert "2 open presentations" in err
+    assert "--backend libreoffice" in err
+    assert app.quit_calls == 0
+    assert app.Presentations.open_calls == []
+
+
+def test_cli_ordinary_conversion_failure_still_exits_1(tmp_path, capsys):
+    """The exit-code mapping is narrow: every other conversion failure stays exit 1."""
+    import mid.backends.office as office_mod
+
+    src = tmp_path / "deck.ppt"
+    src.write_text("x", encoding="utf-8")
+
+    def broken_factory(progid):
+        raise OSError("locked for editing by another user")
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod.OfficeBackend, "probe", return_value=_office_available()):
+            with patch.object(office_mod, "_COM_FACTORY", broken_factory):
+                with _with_office_backend(office_mod):
+                    code = _run_cli(["convert", str(src), "--backend", "office"])
+
+    assert code == 1, "a plain conversion failure must not inherit exit 3"
+    err = capsys.readouterr().err.lower()
+    assert "conversion failed" in err
+    assert "close office" in err
+
+
+def test_batch_ppt_shared_instance_counts_failed_and_exits_1(tmp_path, capsys):
+    """`batch` keeps its contract: the file fails and the run exits 1 (never 3)."""
+    import mid.backends.office as office_mod
+
+    in_dir = tmp_path / "in"
+    in_dir.mkdir()
+    (in_dir / "deck.ppt").write_text("x", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    app = _FakePowerPointApp(open_count=1)
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod.OfficeBackend, "probe", return_value=_office_available()):
+            with patch.object(office_mod, "_COM_FACTORY", lambda progid: app):
+                with patch.object(office_mod, "_KILLER", MagicMock()):
+                    with _with_office_backend(office_mod):
+                        code = _run_cli(["batch", str(in_dir), "-o", str(out_dir), "--backend", "office"])
+
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "Processed: 1, Succeeded: 0, Failed: 1" in captured.out
+    assert "deck.ppt" in captured.err
+    assert "PowerPoint" in captured.err
+    assert not list(out_dir.glob("*.md")), "nothing may be written for a refused deck"
+    assert app.quit_calls == 0
+    assert app.Presentations.open_calls == []
+
+
+def test_ppt_dispatch_hang_never_kills_powerpoint_processes(tmp_path, monkeypatch):
+    """S4: a hang before the guard must never reach the kill-all fallback."""
+    import time
+    import mid.backends.office as office_mod
+
+    monkeypatch.setenv("MID_OFFICE_TIMEOUT", "1")
+    src = tmp_path / "deck.ppt"
+    src.write_text("x", encoding="utf-8")
+    calls: list = []
+
+    def hanging_factory(progid):
+        # Deliberately far above the clamped timeout floor (MID_OFFICE_TIMEOUT
+        # "1" resolves to 5s): a 5s sleep raced the 5s join and sometimes
+        # finished first, which made this assertion time-dependent.
+        time.sleep(30)
+        raise AssertionError("unreachable")
+
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", hanging_factory):
+            with patch.object(office_mod, "_KILLER", lambda t: calls.append(t)):
+                result = office_mod.OfficeBackend().convert(src)
+
+    assert result.success is False and result.exit_code is None
+    assert "timed out" in (result.error or "")
+    assert calls == [], f"a shared-capable PowerPoint instance must never be killed (got {calls})"
+
+
+def test_ppt_count_read_hang_keeps_may_quit_false(tmp_path, monkeypatch):
+    """S4: may_quit stays False while the count probe is still running; nothing is killed.
+
+    The probe must outlive the clamped timeout by a wide margin, otherwise the
+    race decides the assertion: MID_OFFICE_TIMEOUT clamps up to 5s, so a 5s sleep
+    can finish first, the guard then correctly observes an empty instance and the
+    kill becomes legitimate. 30s keeps the probe unambiguously pending.
+    """
+    import time
+    import mid.backends.office as office_mod
+
+    monkeypatch.setenv("MID_OFFICE_TIMEOUT", "1")
+
+    class _SlowPresentations:
+        @property
+        def Count(self):
+            time.sleep(30)
+            return 0
+
+    class _App:
+        Presentations = _SlowPresentations()
+
+    src = tmp_path / "deck.ppt"
+    src.write_text("x", encoding="utf-8")
+    calls: list = []
+    with patch.object(sys, "platform", "win32"):
+        with patch.object(office_mod, "_COM_FACTORY", lambda progid: _App()):
+            with patch.object(office_mod, "_KILLER", lambda t: calls.append(t)):
+                result = office_mod.OfficeBackend().convert(src)
+
+    assert result.success is False
+    assert calls == []
+
+
 # --- OFFICE-06: integration gate -------------------------------------------------
 
 
@@ -1118,3 +1435,71 @@ def test_real_doc_conversion_win32(tmp_path):
     result = b.convert(src)
     assert result.success
     assert result.content.strip()
+
+
+def _create_real_ppt(path: Path) -> None:
+    """Create a genuine legacy ``.ppt`` via PowerPoint COM (ppSaveAsPresentation = 1)."""
+    import gc
+
+    import pythoncom
+    from win32com.client import DispatchEx
+
+    pythoncom.CoInitialize()
+    app = None
+    pres = None
+    slide = None
+    owns = False
+    try:
+        app = DispatchEx("PowerPoint.Application")
+        if int(app.Presentations.Count) > 0:
+            raise RuntimeError("a PowerPoint instance with open presentations is running")
+        owns = True
+        pres = app.Presentations.Add()
+        slide = pres.Slides.Add(1, 2)  # 2 = ppLayoutText (title + body)
+        slide.Shapes.Title.TextFrame.TextRange.Text = "Titulo de prueba 41"
+        slide.Shapes.Placeholders(2).TextFrame.TextRange.Text = "Cuerpo de la diapositiva"
+        pres.SaveAs(str(path), 1)  # 1 = ppSaveAsPresentation (.ppt)
+    finally:
+        # Release the presentation and its slide before Quit: wrappers released
+        # after PowerPoint exited report RPC_E_DISCONNECTED from the finalizer.
+        slide = None
+        if pres is not None:
+            try:
+                pres.Close()
+            except Exception:
+                pass
+        pres = None
+        if owns and app is not None:
+            try:
+                app.Quit()
+            except Exception:
+                pass
+        app = None
+        gc.collect()
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows + installed PowerPoint")
+def test_real_ppt_conversion_win32(tmp_path):
+    """Real .ppt -> md on a Windows host with PowerPoint (skipped elsewhere)."""
+    from mid.backends.office import OfficeBackend
+
+    b = OfficeBackend()
+    avail = b.probe()
+    if not avail.available:
+        pytest.skip(f"Office not detected on this runner: {avail.reason}")
+    src = tmp_path / "sample.ppt"
+    try:
+        _create_real_ppt(src)
+    except Exception as exc:  # no PowerPoint COM / caption missing
+        pytest.skip(f"could not create a real .ppt on this runner: {exc}")
+    assert src.stat().st_size > 0
+    result = b.convert(src)
+    if result.exit_code == 3:
+        pytest.skip(f"refused to touch a live PowerPoint instance: {result.error}")
+    assert result.success, result.error
+    assert result.content.strip()
+    assert "Titulo de prueba 41" in result.content

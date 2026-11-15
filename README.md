@@ -259,7 +259,7 @@ Exit `0` when healthy, `1` when any finding (e.g. optional `ffmpeg` or LibreOffi
 
 Legacy Office formats are currently detected and rejected with a clear message to migrate to modern formats first.
 When a local LibreOffice is available, `mid --backend libreoffice` can convert them (see LibreOffice backend below).
-On Windows with Microsoft Office installed, `mid convert --backend office` covers `.doc`/`.xls` (see Office backend below); `.ppt` stays migrate-first.
+On Windows with Microsoft Office installed, `mid convert --backend office` covers `.doc`/`.xls`/`.ppt` (see Office backend below).
 
 > Real conversion capability depends on installed MarkItDown extras and system tools.
 > For this repo, `markitdown[all]` inside local `.venv` is the recommended setup.
@@ -324,8 +324,8 @@ forces it. The backend declares:
 
 ## Office backend (optional, Windows-only)
 
-On Windows, `mid` ships an `office` backend that converts legacy Word/Excel files (`.doc`, `.xls`) through an
-installed copy of Microsoft Office via COM automation. It never activates silently — `--backend office` is
+On Windows, `mid` ships an `office` backend that converts legacy Word/Excel/PowerPoint files (`.doc`, `.xls`, `.ppt`)
+through an installed copy of Microsoft Office via COM automation. It never activates silently — `--backend office` is
 always required — and it is registered only on Windows (`win32`). Full detail: `docs/office-backend.md`.
 
 ```powershell
@@ -338,11 +338,19 @@ mid convert .\legacy\report.doc --backend office -o .\out\report.md
 
 - **Customer-provided Office** — `mid` never bundles or licenses Office. Requires the `office-windows` extra:
   `pip install "mid[office-windows]"` (`pywin32`, lazy Windows-only import, never required on Linux/macOS).
-- **v1 scope: Word/Excel only** — `.ppt` stays on the migrate-first path.
+- **Scope: Word/Excel/PowerPoint** — `.doc`, `.xls` and `.ppt`. `.pptx` is native MarkItDown; `.pps`/`.pot`/`.pptm`
+  stay on the migrate-first path.
+- **PowerPoint is single-instance** — `DispatchEx` may return a `POWERPNT.exe` you already have open. If it holds
+  presentations, mid refuses to touch it: `mid convert --backend office deck.ppt` exits `3` before opening, saving
+  or quitting anything (so your unsaved work is never closed). Close PowerPoint and retry, or use
+  `--backend libreoffice`. `mid batch` counts that file as `Failed` and still exits `1`.
+- **PowerPoint's window stays visible** — PowerPoint rejects `Visible = False`; the conversion still succeeds, but
+  the window is not hidden (unlike Word/Excel). This is a known limitation, not a claim of headless operation.
 - Environment: `MID_OFFICE_PATH` (existing-file override, version signal only, never executed) and
   `MID_OFFICE_TIMEOUT` (`30`, clamped `5..300`). Detection order: platform gate → `MID_OFFICE_PATH` →
   App Paths (`WINWORD.EXE`, `EXCEL.EXE`) → `win32com` import → `HKCR\CurVer` version.
-- Exit codes: unknown backend `2`, unavailable backend `3` with actionable reason, conversion failure `1`, success `0`.
+- Exit codes: unknown backend `2`, unavailable backend `3` with actionable reason, conversion failure `1`,
+  PowerPoint shared-instance guard `3` (via `ConvertResult.exit_code`; `batch` stays `1`), success `0`.
 
 ## Development and testing (local `.venv`)
 

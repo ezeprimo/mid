@@ -113,6 +113,18 @@ docker run --rm -v "$(pwd)/tests/fixtures/legacy:/data" mid:legacy convert --bac
 
 Notes: local conversion needs `soffice` on PATH (`MID_LIBREOFFICE_PATH` override, `MID_LIBREOFFICE_TIMEOUT` default 30s, 5..300). The mounted host dir must be writable by container `USER mid` (`chmod a+rwX <host-dir>`). On LibreOffice 7.4, `.doc` converts but `.xls`/`.ppt` yield empty output.
 
+Windows with installed Office (`mid doctor` shows `backend:office` ok):
+
+```powershell
+mid convert .\legacy\report.doc --backend office -o .\out\report.md
+mid convert .\legacy\deck.ppt  --backend office -o .\out\deck.md
+```
+
+`.ppt` goes through PowerPoint COM. PowerPoint is single-instance, so if a running `POWERPNT.exe` already holds
+presentations the command exits `3` before opening, saving or quitting anything (your unsaved work is never closed) —
+close PowerPoint and retry, or use `--backend libreoffice`. `mid batch` counts that file as `Failed` and exits `1`.
+The PowerPoint window is visible during conversion (PowerPoint refuses `Visible = False`); it is not a headless path.
+
 ## Format guidance
 
 - Supported production formats are those reported by `mid --list-formats` under the `Supported:` line.
@@ -120,11 +132,12 @@ Notes: local conversion needs `soffice` on PATH (`MID_LIBREOFFICE_PATH` override
   backend, so `mid convert report.odt` works without `--backend libreoffice`. Without the backend the exit is 3 and the
   message names the backend, the reason and the install hint.
 - Legacy formats `.doc`, `.xls`, `.ppt` are rejected by default but convertible via a legacy backend (see above).
-- Exception: on Windows with the `office` backend available (`mid doctor` shows `backend:office` ok — listing with `--list-backends` never probes opt-in backends), `.doc`/`.xls` convert via `mid convert <file> --backend office` (see `docs/office-backend.md`). `.ppt` always stays migrate-first.
+- Exception: on Windows with the `office` backend available (`mid doctor` shows `backend:office` ok — listing with `--list-backends` never probes opt-in backends), `.doc`/`.xls`/`.ppt` convert via `mid convert <file> --backend office` (see `docs/office-backend.md`).
 
 ```powershell
 mid doctor
 mid convert .\legacy\report.doc --backend office -o .\out\report.md
+mid convert .\legacy\deck.ppt --backend office -o .\out\deck.md
 ```
 
 For the authoritative list at runtime, run `mid --list-formats`.
@@ -136,7 +149,7 @@ For the authoritative list at runtime, run `mid --list-formats`.
 | 0 | Success |
 | 1 | Conversion error (MarkItDown / converter failure, incl. legacy conversion failure) |
 | 2 | Argument error (missing file, invalid flag, unknown backend) |
-| 3 | Unsupported format, or unavailable backend when `--backend` names one that is not installed |
+| 3 | Unsupported format, or unavailable backend when `--backend` names one that is not installed. `convert --backend office` also uses `3` when PowerPoint already has presentations open (shared single instance); `batch` counts that file as `Failed` and exits `1`. |
 
 ## Inline help
 

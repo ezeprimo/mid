@@ -1,30 +1,37 @@
 # Office Backend (Windows)
 
-Explicit opt-in backend that converts legacy Word/Excel files (`.doc`, `.xls`)
-through an installed copy of Microsoft Office on Windows, via COM automation.
-Each file is saved to a macro-free OOXML intermediate (`.docx`/`xlsx`) and
-then read by MarkItDown's native docx/xlsx reader — no HTML involved.
-It mirrors the LibreOffice backend structure and error model.
+Explicit opt-in backend that converts legacy Word/Excel/PowerPoint files
+(`.doc`, `.xls`, `.ppt`) through an installed copy of Microsoft Office on
+Windows, via COM automation. Each file is saved to a macro-free OOXML
+intermediate (`.docx`/`.xlsx`/`.pptx`) and then read by MarkItDown's native
+docx/xlsx/pptx reader — no HTML involved. It mirrors the LibreOffice backend
+structure and error model.
 
-> v1 scope: **Word/Excel only**. `.ppt` stays on the migrate-first path and
-> is deferred post-v1.
+> PowerPoint is single-instance: when a running `POWERPNT.exe` already holds
+> presentations, the backend refuses to touch it and exits `3` before opening,
+> saving or quitting anything. Close PowerPoint (or use
+> `--backend libreoffice`) and retry.
 
 ## Quick path
 
 ```powershell
 mid --list-backends
 mid convert .\legacy\report.doc --backend office -o .\out\report.md
+mid convert .\legacy\deck.ppt --backend office -o .\out\deck.md
 ```
 
 - `--backend office` is **always required** — the backend never activates silently.
-- Without `--backend`, `.doc`/`.xls` keep the legacy migrate-first behavior.
+- Without `--backend`, `.doc`/`.xls`/`.ppt` keep the legacy migrate-first behavior.
 - Unknown backend exits `2` (lists available backends); an unavailable
-  `office` backend exits `3` with the detection reason.
+  `office` backend exits `3` with the detection reason. A conversion failure
+  exits `1` — except the PowerPoint shared-instance guard below, which exits `3`.
+  `mid batch` keeps its own contract: such a file counts as `Failed` and the
+  run still exits `1`.
 
 ## Supported versions and licensing
 
-- Word/Excel 2013 (15.0, validated on 64-bit MSI), 2016, 2019, 2021, and
-  Microsoft 365 (Click-to-Run and MSI, 32-bit and 64-bit).
+- Word/Excel/PowerPoint 2013 (15.0, validated on 64-bit MSI), 2016, 2019, 2021,
+  and Microsoft 365 (Click-to-Run and MSI, 32-bit and 64-bit).
 - Office is **customer-provided** — `mid` never bundles or licenses Office.
 - Requires the `office-windows` extra on Windows: `pip install "mid[office-windows]"`.
   `pywin32` is a lazy, Windows-only dependency and is never imported on
@@ -44,11 +51,30 @@ version. Only `available=True` results are cached.
 
 ## Security boundary
 
-- Per-app `DispatchEx` only (`Word.Application`, `Excel.Application`) — never
-  attaches to a running user instance (`Dispatch` is rejected).
+- Per-app `DispatchEx` only (`Word.Application`, `Excel.Application`,
+  `PowerPoint.Application`) — never attaches to a running user instance
+  (`Dispatch` is rejected).
+- **Shared PowerPoint instance (never touched).** PowerPoint is a
+  single-instance server, so `DispatchEx("PowerPoint.Application")` can return a
+  `POWERPNT.exe` the user already has open. Right after dispatch the backend
+  reads `app.Presentations.Count`; if it is greater than `0` it aborts with
+  exit `3` and an actionable message **before** opening, saving, closing or
+  quitting anything, and it never runs `Quit` or the PID killer on that
+  instance — not even when the dispatch or the presentation-count probe itself
+  hangs (the `may_quit` decision defaults to "not ours" before the worker
+  starts and only flips after the instance is proven empty). `Quit` and the
+  kill fallback are only allowed on an instance that was empty when mid took
+  it.
 - Documents open hidden and read-only; alerts, macros, DDE, and link updates
   are off (`DisplayAlerts=0`, `AutomationSecurity=3`, `AskToUpdateLinks=False`,
-  `AddToRecentFiles=False`).
+  `AddToRecentFiles=False`). The presentation opens with
+  `WithWindow=False`, so it is windowless and has no active presentation — the
+  code only ever uses the object `Presentations.Open` returns.
+- **PowerPoint's application window stays visible.** PowerPoint rejects
+  `Visible = False` (`Hiding the application window is not allowed`), so unlike
+  Word/Excel its window is not hidden during a conversion. The failure is
+  swallowed (never a crash) and the limitation is documented rather than
+  papered over.
 - Work happens in a `mid-office-` system temp dir that is always removed,
   including on timeouts.
 - `Close` + `Quit` run in `finally`; hangs fall back to a PID-scoped kill
@@ -58,14 +84,21 @@ version. Only `available=True` results are cached.
 
 ## Limits
 
-- Input extensions: `.doc`, `.xls` only (v1).
-- SaveAs targets are macro-free OOXML: `12` (`wdFormatXMLDocument`, `.docx`)
-  and `51` (`xlOpenXMLWorkbook`, `.xlsx`). Both constants exist since Office
-  2007, so Office 2013 needs no fallback; `DisplayAlerts=0` suppresses
+- Input extensions: `.doc`, `.xls`, `.ppt`. `.pptx`, `.pps`, `.pot` and
+  `.pptm` are not claimed (`.pptx` is native MarkItDown).
+- SaveAs targets are macro-free OOXML: `12` (`wdFormatXMLDocument`, `.docx`),
+  `51` (`xlOpenXMLWorkbook`, `.xlsx`) and `24`
+  (`ppSaveAsOpenXMLPresentation`, `.pptx`). All three constants exist since
+  Office 2007, so Office 2013 needs no fallback; `DisplayAlerts=0` suppresses
   compatibility prompts. A macro-carrying source saves macro-stripped.
   FileFormat `52` (`.xlsm`) is NOT a fallback — MarkItDown's XlsxConverter
   only accepts the `.xlsx` extension, and the temp file must carry the real
   OOXML suffix (MarkItDown dispatches on extension).
+- `.ppt` goes through PowerPoint's own `SaveAs 24` and then MarkItDown's pptx
+  reader, which keeps slide order, tables, charts and speaker notes. The
+  shapes are not walked by hand.
+- PowerPoint's window is visible during conversion (see the security
+  boundary) — run conversions when the desktop is free if that matters.
 - OOXML intermediate capped at 20 MB, then delegated to
   `MarkitDownConverter`. MarkItDown's XlsxConverter reads every sheet
   (`pd.read_excel(sheet_name=None)`) and emits one `## <name>` section per
@@ -100,6 +133,7 @@ version. Only `available=True` results are cached.
 | `pywin32 not installed` (source checkout) | Missing extra | `pip install "mid[office-windows]"` |
 | `pywin32 not installed in this binary` | Packaged binary ships without the office backend (pip cannot extend it) | Install mid from source with `pip install "mid[office-windows]"`, or convert with `--backend libreoffice` |
 | `file locked — close Office` | File open elsewhere | Close Office and retry |
+| `PowerPoint has N open presentations` | A running PowerPoint holds presentations; mid will not quit or save over an instance it did not start | Close PowerPoint and retry, or convert with `--backend libreoffice` |
 | `Office busy — retry` | RPC server busy | Retry shortly |
-| `timed out after Ns (orphan cleaned up)` | Hung COM instance | Orphan was Quit + killed; retry |
-| exit `2` / `3` | Unknown / unavailable backend | Check `--list-backends` output |
+| `timed out after Ns (orphan cleaned up)` | Hung COM instance | Orphan was Quit + killed (never a shared PowerPoint instance); retry |
+| exit `2` / `3` | Unknown / unavailable backend, or the PowerPoint shared-instance guard | Check `--list-backends` output; close PowerPoint for `.ppt` |

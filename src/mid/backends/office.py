@@ -1,12 +1,23 @@
-"""Office backend — explicit opt-in COM conversion via installed Word/Excel.
+"""Office backend — explicit opt-in COM conversion via installed Word/Excel/PowerPoint.
 
-v1 scope (maintainer decision): Word/Excel ONLY (``.doc``/``.xls``). ``.ppt``
-stays on the LegacyPlaceholder migrate-first path, deferred post-v1.
+Scope (maintainer decision): Word, Excel and PowerPoint (``.doc``/``.xls``/
+``.ppt``) — each through its own COM server, saved to a macro-free OOXML
+intermediate. ``.pptx`` is native MarkItDown, never this backend; ``.pps``,
+``.pot`` and ``.pptm`` stay on the LegacyPlaceholder migrate-first path.
+
+PowerPoint is single-instance: ``DispatchEx`` may return a ``POWERPNT.exe``
+the user already has open. An instance that already holds presentations is
+never opened, saved over, closed, quit or killed — the backend aborts with
+exit 3 and an actionable message (issue #41 S4). Unlike Word/Excel, PowerPoint
+refuses ``Visible = False`` ("Hiding the application window is not allowed"),
+so its window stays visible for the duration of a conversion; the capability
+is not hidden and the docs say so.
 
 Kill scope (maintainer decision): PID-scoped via GetWindowThreadProcessId.
 ``taskkill /IM`` constrained to the allowlisted Office exes is fallback only
 when no PID could be resolved. The killer never executes a user-controlled
-path — only ``taskkill`` with ``shell=False``.
+path — only ``taskkill`` with ``shell=False``. ``Quit`` and the killer only
+run on an instance that was empty when mid took it.
 """
 
 from __future__ import annotations
@@ -30,24 +41,57 @@ from mid.models import ConvertResult
 
 logger = logging.getLogger(__name__)
 
-#: v1 ProgIDs: Word + Excel only. PowerPoint deferred post-v1.
-#: SaveAs targets are macro-free OOXML, read natively by MarkItDown:
-#: 12 = wdFormatXMLDocument (*.docx), 51 = xlOpenXMLWorkbook (*.xlsx).
-#: Both constants exist since Office 2007, so Office 2013 needs no fallback.
-#: A macro-carrying source (.doc/.xls with VBA) saves macro-stripped under
-#: DisplayAlerts=0; FileFormat 52 (.xlsm) is NOT a fallback — MarkItDown's
+#: Per-app ProgIDs — one COM server per engine. SaveAs targets are macro-free
+#: OOXML, read natively by MarkItDown: 12 = wdFormatXMLDocument (*.docx),
+#: 51 = xlOpenXMLWorkbook (*.xlsx), 24 = ppSaveAsOpenXMLPresentation (*.pptx).
+#: All three constants exist since Office 2007, so Office 2013 needs no
+#: fallback. A macro-carrying source (.doc/.xls with VBA) saves macro-stripped
+#: under DisplayAlerts=0; FileFormat 52 (.xlsm) is NOT a fallback — MarkItDown's
 #: XlsxConverter only accepts the `.xlsx` extension.
 PROGIDS: dict[str, tuple[str, str, int]] = {
     ".doc": ("Word.Application", "WINWORD.EXE", 12),
     ".xls": ("Excel.Application", "EXCEL.EXE", 51),
+    ".ppt": ("PowerPoint.Application", "POWERPNT.EXE", 24),
 }
 
 #: Intermediate extension per input extension. The temp file MUST carry the
 #: real OOXML suffix — MarkItDown dispatches on extension.
-_INTERMEDIATE_EXT: dict[str, str] = {".doc": ".docx", ".xls": ".xlsx"}
+_INTERMEDIATE_EXT: dict[str, str] = {".doc": ".docx", ".xls": ".xlsx", ".ppt": ".pptx"}
 
 #: Only these exes may ever appear in a kill fallback argv. Never a user path.
-_ALLOWED_EXES = frozenset({"WINWORD.EXE", "EXCEL.EXE"})
+_ALLOWED_EXES = frozenset({"WINWORD.EXE", "EXCEL.EXE", "POWERPNT.EXE"})
+
+
+def _shared_powerpoint_message(open_count: int) -> str:
+    """Actionable refusal when PowerPoint already holds presentations (S4).
+
+    ASCII only: this message is printed to the Windows console, where cp1252
+    cannot render typographic punctuation. It also stands on its own, because
+    the CLI prefix it inherits (``error: conversion failed:``) is fixed in
+    ``cli.py`` — the text says nothing was converted.
+    """
+    noun = "presentation" if open_count == 1 else "presentations"
+    return (
+        f"PowerPoint has {open_count} open {noun}. mid refused before converting anything: "
+        "it will not open, save, close or quit a PowerPoint instance it did not start "
+        "(PowerPoint is single-instance, so quitting it would close your unsaved work). "
+        "Close PowerPoint and retry, or convert with --backend libreoffice."
+    )
+
+
+class SharedPowerPointInstance(RuntimeError):
+    """A running PowerPoint that already has presentations open (never touched).
+
+    Carries :attr:`exit_code` so the CLI aborts with 3 instead of the generic
+    conversion failure code 1. ``batch`` deliberately keeps exit 1.
+    """
+
+    exit_code = 3
+
+    def __init__(self, open_count: int) -> None:
+        super().__init__(_shared_powerpoint_message(open_count))
+        self.open_count = open_count
+
 
 #: 20 MB intermediate cap shared with the LibreOffice tail.
 #: (module constant _MAX_OUTPUT_BYTES defined below)
@@ -293,7 +337,13 @@ def _expand_merged_cells(path: Path) -> None:
 
 
 def _convert_inner(progid: str, src_copy: Path, out_path: Path, holder: dict, save_format: int) -> None:
-    """Run the COM conversion on the worker thread. Records app for Quit."""
+    """Run the COM conversion on the worker thread. Records app for Quit.
+
+    ``holder["may_quit"]`` records whether the instance is mid's own. A
+    PowerPoint instance that already held presentations belongs to the user and
+    is never quit or killed (issue #41 S4); the conversion aborts before any
+    ``Open``/``SaveAs``/``Close`` happens.
+    """
     try:
         try:
             import pythoncom
@@ -304,7 +354,21 @@ def _convert_inner(progid: str, src_copy: Path, out_path: Path, holder: dict, sa
         factory = _get_com_factory()
         app = factory(progid)
         holder["app"] = app
+        is_powerpoint = progid == "PowerPoint.Application"
+        # Conservative default: an instance is not ours until it is proven empty.
+        may_quit = not is_powerpoint
+        holder["may_quit"] = may_quit
+        if is_powerpoint:
+            # PowerPoint is single-instance: DispatchEx may hand back the user's
+            # running POWERPNT.exe. Refuse BEFORE opening, saving, closing or
+            # quitting anything, so no user work is ever touched (S4).
+            open_count = int(getattr(app.Presentations, "Count", 0) or 0)
+            if open_count > 0:
+                raise SharedPowerPointInstance(open_count)
+            may_quit = True
+            holder["may_quit"] = True
         # Harden: hidden, no alerts/macros/DDE/links, never silent user attach.
+        # PowerPoint refuses Visible=False (window stays visible — documented).
         try:
             app.Visible = False
         except Exception:
@@ -316,7 +380,24 @@ def _convert_inner(progid: str, src_copy: Path, out_path: Path, holder: dict, sa
                 pass
         is_excel = progid == "Excel.Application"
         try:
-            if is_excel:
+            if is_powerpoint:
+                # WithWindow=False opens windowless, which also means NO active
+                # presentation: only the returned object may be used (never
+                # app.ActivePresentation).
+                pres = app.Presentations.Open(
+                    str(src_copy),
+                    ReadOnly=True,
+                    Untitled=False,
+                    WithWindow=False,
+                )
+                try:
+                    pres.SaveAs(str(out_path), FileFormat=save_format)
+                finally:
+                    try:
+                        pres.Close()
+                    except Exception:
+                        pass
+            elif is_excel:
                 wb = app.Workbooks.Open(
                     str(src_copy),
                     ReadOnly=True,
@@ -346,10 +427,11 @@ def _convert_inner(progid: str, src_copy: Path, out_path: Path, holder: dict, sa
                     except Exception:
                         pass
         finally:
-            try:
-                app.Quit()
-            except Exception:
-                pass
+            if may_quit:
+                try:
+                    app.Quit()
+                except Exception:
+                    pass
         holder["ok"] = True
     except BaseException as exc:  # never-raise; surfaced via holder
         holder["error"] = exc
@@ -363,13 +445,13 @@ def _convert_inner(progid: str, src_copy: Path, out_path: Path, holder: dict, sa
 
 
 class OfficeBackend(Backend):
-    """Explicit opt-in COM backend for legacy Word/Excel on Windows."""
+    """Explicit opt-in COM backend for legacy Word/Excel/PowerPoint on Windows."""
 
     name: str = "office"
     display_name: str = "Office"
     opt_in: bool = True
-    supported_extensions: ClassVar[frozenset[str]] = frozenset({".doc", ".xls"})
-    required_tools: ClassVar[tuple[str, ...]] = ("WINWORD.EXE", "EXCEL.EXE")
+    supported_extensions: ClassVar[frozenset[str]] = frozenset({".doc", ".xls", ".ppt"})
+    required_tools: ClassVar[tuple[str, ...]] = ("WINWORD.EXE", "EXCEL.EXE", "POWERPNT.EXE")
 
     def probe(self) -> Availability:
         """Probe availability — never raises, completes within 2s."""
@@ -434,14 +516,19 @@ class OfficeBackend(Backend):
         """Convert via per-app DispatchEx -> OOXML -> MarkItDown. Never raises.
 
         ``.doc`` saves as ``.docx`` (12 = wdFormatXMLDocument), ``.xls`` as
-        ``.xlsx`` (51 = xlOpenXMLWorkbook); the intermediate is then read by
-        MarkItDown's native docx/xlsx reader — no HTML involved. MarkItDown's
+        ``.xlsx`` (51 = xlOpenXMLWorkbook) and ``.ppt`` as ``.pptx`` (24 =
+        ppSaveAsOpenXMLPresentation); the intermediate is then read by
+        MarkItDown's native docx/xlsx/pptx reader — no HTML involved. MarkItDown's
         XlsxConverter iterates every sheet (``## <name>`` heading per sheet),
         so multi-sheet workbooks convert whole. On the ``.xls`` path merged
         ranges are forward-filled first (top-left value repeated into every
         merged cell, ranges unmerged) so each markdown row is self-contained
         for AI readers; spacer rows stay empty. Final markdown is normalized
         (NBSP → space, whole-cell NaN → empty, ``Unnamed: N`` → empty).
+
+        PowerPoint is single-instance, so an instance that already holds
+        presentations is refused with exit code 3 and never quit or killed
+        (issue #41 S4).
         """
         try:
             if not path.is_file():
@@ -473,6 +560,13 @@ class OfficeBackend(Backend):
                 intermediate = tmp / f"{path.stem}{_INTERMEDIATE_EXT[ext]}"
 
                 holder: dict = {}
+                if progid == "PowerPoint.Application":
+                    # Conservative seed BEFORE the worker starts (S4): until the
+                    # guard has positively proven the instance was empty when mid
+                    # took it, nothing may Quit it or run the kill-all fallback.
+                    # A dispatch or Presentations.Count hang therefore finds the
+                    # key already False and never reaches taskkill /IM POWERPNT.
+                    holder["may_quit"] = False
                 worker = threading.Thread(
                     target=_convert_inner,
                     args=(progid, tmp_input, intermediate, holder, save_format),
@@ -487,18 +581,24 @@ class OfficeBackend(Backend):
                 # The finally below drains reference cycles synchronously so the
                 # Office process can exit before we return.
                 app = holder.pop("app", None)
+                # Word/Excel keep the historical default (True). PowerPoint only
+                # ever opts in after the guard proved the instance empty (S4), so
+                # a hang before the guard must not kill every POWERPNT.EXE.
+                may_quit = holder.get("may_quit", progid != "PowerPoint.Application")
                 try:
                     if worker.is_alive():
                         # Hang: Quit, then PID-scoped kill fallback, tmp auto-removed.
-                        if app is not None:
+                        # A shared PowerPoint instance is neither quit nor killed.
+                        if app is not None and may_quit:
                             try:
                                 app.Quit()
                             except Exception:
                                 pass
-                        try:
-                            _get_killer()(_resolve_pid(app, exe) if app is not None else exe)
-                        except Exception:
-                            pass
+                        if may_quit:
+                            try:
+                                _get_killer()(_resolve_pid(app, exe) if app is not None else exe)
+                            except Exception:
+                                pass
                         return ConvertResult(
                             content="",
                             metadata={},
@@ -506,7 +606,14 @@ class OfficeBackend(Backend):
                             error=f"conversion timed out after {timeout}s (orphan cleaned up)",
                         )
                     if "error" in holder:
-                        return ConvertResult(content="", metadata={}, success=False, error=_map_error(holder["error"]))
+                        err = holder["error"]
+                        return ConvertResult(
+                            content="",
+                            metadata={},
+                            success=False,
+                            error=_map_error(err),
+                            exit_code=getattr(err, "exit_code", None),
+                        )
 
                     try:
                         size = intermediate.stat().st_size
