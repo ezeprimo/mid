@@ -578,9 +578,7 @@ def handler_batch(args: argparse.Namespace) -> None:
 
             try:
                 out.write_text(result.content, encoding="utf-8")
-                file_entries.append(
-                    _file_entry(file_path, success=True, error=None, timings=per_file_timings)
-                )
+                file_entries.append(_file_entry(file_path, success=True, error=None, timings=per_file_timings))
                 succeeded += 1
             except OSError as exc:
                 print(f"error: {file_path.name}: could not write output '{out}': {exc}", file=sys.stderr)

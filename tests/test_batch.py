@@ -234,7 +234,6 @@ class TestBatchJson:
         assert timings["total_ms"] >= timings["worst_ms"]
 
 
-
 class TestBatchRecursivePreserve:
     def test_preserves_structure(
         self,
