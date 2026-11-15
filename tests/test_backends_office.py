@@ -1385,7 +1385,13 @@ def test_ppt_dispatch_hang_never_kills_powerpoint_processes(tmp_path, monkeypatc
 
 
 def test_ppt_count_read_hang_keeps_may_quit_false(tmp_path, monkeypatch):
-    """S4: may_quit is False before Presentations.Count is touched; a hang there kills nothing."""
+    """S4: may_quit stays False while the count probe is still running; nothing is killed.
+
+    The probe must outlive the clamped timeout by a wide margin, otherwise the
+    race decides the assertion: MID_OFFICE_TIMEOUT clamps up to 5s, so a 5s sleep
+    can finish first, the guard then correctly observes an empty instance and the
+    kill becomes legitimate. 30s keeps the probe unambiguously pending.
+    """
     import time
     import mid.backends.office as office_mod
 
@@ -1394,7 +1400,7 @@ def test_ppt_count_read_hang_keeps_may_quit_false(tmp_path, monkeypatch):
     class _SlowPresentations:
         @property
         def Count(self):
-            time.sleep(5)
+            time.sleep(30)
             return 0
 
     class _App:
