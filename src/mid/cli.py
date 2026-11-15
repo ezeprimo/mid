@@ -221,6 +221,13 @@ def handler_convert(args: argparse.Namespace) -> None:
 
         result = cf(path, backend=backend_name)
         if not result.success:
+            # Backend-declared exit code (issue #41 S4: converting a .ppt while
+            # PowerPoint already has presentations open aborts with 3). Only a
+            # result that names a code gets it; every other failure stays exit 1.
+            code = getattr(result, "exit_code", None)
+            if code is not None:
+                print(f"error: conversion failed: {result.error or 'unknown error'}", file=sys.stderr)
+                sys.exit(code)
             _exit_conv(result.error or "unknown error")
         ext = path.suffix.lower()
         if getattr(args, "json", False):
