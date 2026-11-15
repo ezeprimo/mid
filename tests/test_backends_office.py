@@ -703,9 +703,7 @@ class _FakePowerPointApp:
 
     @property
     def ActivePresentation(self):
-        raise AssertionError(
-            "app.ActivePresentation must never be accessed — WithWindow=False leaves no active presentation"
-        )
+        raise AssertionError("app.ActivePresentation must never be accessed — WithWindow=False leaves no active presentation")
 
 
 def _saveas_format(call: tuple):
