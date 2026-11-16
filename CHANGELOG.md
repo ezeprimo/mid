@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-15
+
 ### Added
 
 - **Per-stage timings in `--json` output (#45)**: `mid convert --json` now carries a `timings` object with `detection_ms`, `probe_ms`, `conversion_ms` and `total_ms`, and `mid batch --json` emits a whole machine-readable summary (`processed`/`succeeded`/`failed`/`skipped`, aggregate `timings` with `total_ms`/`worst_ms`/`p50_ms`, and a `files[]` entry per file with its own stage timings). Values are integer milliseconds, truncated, and the stages are a subset of `total_ms`. This answers the question the old payload could not: a backend stuck in its 2s probe looks nothing like a slow conversion. Additive only — the existing `convert --json` keys are untouched, and `batch` without `--json` still prints the same summary line and exits `1` on failure. `batch --json` keeps stdout pure JSON: the summary line is suppressed, per-file `error:` lines stay on stderr.
@@ -19,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### CI
 
 - **Release smoke exercises a real backend (#65)**: the release workflow now builds the LibreOffice image and runs the *built* binary inside it, asserting `--list-backends` sees the tool, `doctor` probes it, and a real `.odt` converts without `--backend`. The existing smoke converted only a `.docx`, which goes through the native converter and never probed a backend — that is how 0.5.0 shipped a binary with broken LibreOffice detection while every job was green.
+
+### Fixed
+
+- **One probe per conversion (#70, #74)**: an explicit `--backend` conversion probed the backend in the CLI and then again inside `engine.convert_file` with `is_available(refresh=True)`, which bypasses the cache by design — two probes per file, up to twice the 2s probe budget, and two COM opens with the Office backend. `convert_file` now takes an optional `availability`, and the CLI hands over the one it already obtained, on both the explicit-backend and the auto-routed paths. `batch` no longer probes per file either. The library path, the routing decision, the messages and the exit codes are unchanged.
 
 ## [0.5.1] — 2026-10-23
 
