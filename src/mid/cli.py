@@ -322,13 +322,13 @@ def handler_convert(args: argparse.Namespace) -> None:
                 sys.exit(3)
             print(f"error: backend '{backend_name}' unavailable: {reason}", file=sys.stderr)
             sys.exit(3)
-        # delegate to backend via engine. An explicit --backend already probed
-        # above, so the proven Availability is handed over: probing here again
-        # would pay for the probe twice (#70). The auto-routed path keeps its
-        # own separate probe — out of scope for this issue.
+        # delegate to backend via engine. Probing happened above, whether the
+        # backend came from --backend or from auto-routing, so the proven
+        # Availability is handed over: probing again inside the engine would pay
+        # for it twice, up to 2x the probe budget per file (#70, #74).
         from mid.engine import convert_file as cf
 
-        result = cf(path, backend=backend_name, availability=None if auto_routed else avail)
+        result = cf(path, backend=backend_name, availability=avail)
         if not result.success:
             # Backend-declared exit code (issue #41 S4: converting a .ppt while
             # PowerPoint already has presentations open aborts with 3). Only a

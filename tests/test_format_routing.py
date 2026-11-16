@@ -176,3 +176,45 @@ def test_list_formats_keeps_two_lines_when_no_backend_adds_formats(clean_registr
     lines = out.strip().splitlines()
     assert len(lines) == 2
     assert "Via backend" not in out
+
+
+class CountingProbeBackend(FakeLibreOfficeBackend):
+    """Counts probe() calls so the auto-routed path cannot pay for two."""
+
+    def __init__(self, *, available: bool, reason: str | None = None) -> None:
+        super().__init__(available=available, reason=reason)
+        self.probe_calls = 0
+
+    def probe(self):
+        self.probe_calls += 1
+        return super().probe()
+
+
+@pytest.mark.parametrize("ext", ROUTED_EXTENSIONS)
+def test_auto_routed_format_probes_once(clean_registry, tmp_path: Path, ext: str) -> None:
+    """Issue #74: auto-routing already probed, so the engine must not repeat it."""
+    backend = CountingProbeBackend(available=True)
+    registry.register(backend)
+    source = tmp_path / f"sample{ext}"
+    source.write_bytes(b"payload")
+
+    code, out, err = _run(["convert", str(source)])
+
+    assert code == 0, f"stderr: {err}"
+    assert "converted by backend" in out
+    assert backend.probe_calls == 1, f"auto-routing must probe once, probed {backend.probe_calls}"
+
+
+def test_auto_routed_unavailable_probes_once_and_keeps_guidance(clean_registry, tmp_path: Path) -> None:
+    """An unavailable auto-routed backend still exits 3 with the actionable hint."""
+    backend = CountingProbeBackend(available=False, reason="no tool")
+    registry.register(backend)
+    source = tmp_path / "sample.odt"
+    source.write_bytes(b"payload")
+
+    code, out, err = _run(["convert", str(source)])
+
+    assert code == 3
+    assert "needs the 'libreoffice' backend" in err
+    assert "hint:" in err
+    assert backend.probe_calls == 1
