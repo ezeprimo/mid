@@ -65,10 +65,11 @@ omit = ["*/__main__.py"]
 
 [tool.coverage.report]
 # 82, not a round number chosen by feel: the gate runs on the 3.12 leg of CI,
-# which measured 83% on ubuntu-latest. One point of slack absorbs rounding and
-# a neutral refactor; more than that would let real regression through, since
-# 1 point is ~18 statements. Raise it as `doctor.py` (64%, the largest
-# actionable gap) gains tests; never lower it without saying why here.
+# which measured 82.52% on ubuntu-latest (the table prints 83%, rounded). That
+# leaves 0.52 points of slack, roughly 9 of the 1779 counted statements, so a PR
+# that adds untested code meets the gate instead of sailing past it. Raise it as
+# `doctor.py` (64%, the largest actionable gap) gains tests; never lower it
+# without saying why here.
 fail_under = 82
 exclude_lines = [
     "pragma: no cover",
