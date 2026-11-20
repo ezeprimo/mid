@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1450,53 +1451,125 @@ _PPT_BODY = "Cuerpo de la diapositiva"
 
 _TASKLIST_POWERPNT = ["tasklist", "/FI", "IMAGENAME eq POWERPNT.EXE", "/FO", "CSV", "/NH"]
 
+#: How tasklist (localized) announces that the image filter matched nothing: an
+#: empty match prints no CSV row at all, only a notice. Observed here:
+#: "INFO: No tasks are running ..." (en) and "INFORMACIÓN: no hay tareas ..."
+#: (es, mangled accent and wrapped over two lines by the console codepage).
+_TASKLIST_NO_TASKS_PREFIXES = ("info", "informaci")
+
+#: Bounded grace the fixture child gives the PowerPoint server to finish after
+#: ``Quit`` -- a deadline, not a magic sleep. It is read through the environment
+#: only so the in-process guard test can pin the deadline branch without waiting.
 # Child-side fixture builder: creates a genuine legacy .ppt (ppSaveAsPresentation
 # = 1) and exits without running interpreter teardown. sys.argv = [-c, path,
 # title, body]. Exit 3 means a PowerPoint instance already held presentations.
 _CREATE_PPT_CHILD = r"""
+import csv
 import os
+import subprocess
 import sys
 import time
 
 import pythoncom
 from win32com.client import DispatchEx
 
+TASKLIST = ["tasklist", "/FI", "IMAGENAME eq POWERPNT.EXE", "/FO", "CSV", "/NH"]
+GRACE = float(os.environ.get("MID_PPT_QUIT_GRACE", "15.0"))
+POLL = 0.25
+
+def _powerpoint_pids(stdout):
+    pids = []
+    for row in csv.reader(stdout.splitlines()):
+        if len(row) >= 2 and row[0].upper() == "POWERPNT.EXE" and row[1].isdigit():
+            pids.append(int(row[1]))
+    return pids
+
+
+def _quiesce():
+    # Poll tasklist until POWERPNT.EXE is gone; return any survivors.
+    deadline = time.monotonic() + GRACE
+    pids = []
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run(TASKLIST, capture_output=True, text=True, check=False, timeout=60)
+        except Exception:
+            time.sleep(POLL)  # an unreadable tasklist proves nothing: keep waiting
+            continue
+        if result.returncode == 0:
+            pids = _powerpoint_pids(result.stdout)
+            if not pids:
+                return []
+        time.sleep(POLL)
+    return pids
+
+
 path, title, body = sys.argv[1], sys.argv[2], sys.argv[3]
 created = False
+# Ownership guard (#41): the instance is ours only once it positively proves it
+# was empty. DispatchEx on a single-instance server may hand back the user's
+# POWERPNT.EXE, so a Quit without that proof could close unsaved work.
+owned = False
 pythoncom.CoInitialize()
 app = pres = None
 try:
     app = DispatchEx("PowerPoint.Application")
-    if int(app.Presentations.Count) > 0:
+    open_count = int(app.Presentations.Count)
+    if open_count > 0:
         # A foreign instance is never closed or quit (#41): leave before the
         # cleanup below can reach it. Nothing of ours existed to clean up.
         print("a PowerPoint instance with open presentations is running", file=sys.stderr)
         sys.stderr.flush()
         os._exit(3)
-    pres = app.Presentations.Add()
+    owned = True
+    pres = app.Presentations.Add()  # ours: added to the instance proven empty
     slide = pres.Slides.Add(1, 2)  # 2 = ppLayoutText (title + body)
     slide.Shapes.Title.TextFrame.TextRange.Text = title
     slide.Shapes.Placeholders(2).TextFrame.TextRange.Text = body
     pres.SaveAs(path, 1)  # 1 = ppSaveAsPresentation (.ppt)
     created = os.path.getsize(path) > 0
 finally:
-    for wrapper, call in ((pres, "Close"), (app, "Quit")):
-        try:
-            getattr(wrapper, call)()
-        except Exception:
-            pass
+    if owned:
+        # Only what was proved ours is closed. An unreadable Presentations.Count
+        # leaves the instance alone instead of quitting it blind; the parent's
+        # leftover assertion then reports the survivor as a failure.
+        for wrapper, call in ((pres, "Close"), (app, "Quit")):
+            try:
+                getattr(wrapper, call)()
+            except Exception:
+                pass
+    # Uninitialize while the server is still shutting down: an apartment closed
+    # after the server is gone waits on calls that can no longer complete.
     try:
         pythoncom.CoUninitialize()
     except Exception:
         pass
-sys.stdout.flush()
-sys.stderr.flush()
-# Quit is asynchronous: exiting the instant it returns disconnects the automation
-# client mid-shutdown and can orphan a POWERPNT.EXE that then ignores every later
-# Quit. Give the server the grace to finish while this client is still alive.
-time.sleep(2.0)
+    if owned:
+        # Quit is asynchronous: exiting the instant it returns disconnects the
+        # automation client mid-shutdown and can orphan a POWERPNT.EXE that then
+        # ignores every later Quit. Stay alive while the server finishes, then
+        # leave as soon as tasklist says it is gone (deadline, not fixed sleep).
+        survivors = _quiesce()
+        if survivors:
+            print(f"POWERPNT.EXE survived Quit: pids {survivors}", file=sys.stderr)
+    sys.stdout.flush()
+    sys.stderr.flush()
 os._exit(0 if created else 1)
 """
+
+
+def _parse_tasklist_pids(stdout: str) -> list[int]:
+    """POWERPNT pids in tasklist CSV rows (``[]`` when the filter matched nothing)."""
+    pids = []
+    for row in csv.reader(stdout.splitlines()):
+        if len(row) >= 2 and row[0].upper() == "POWERPNT.EXE" and row[1].isdigit():
+            pids.append(int(row[1]))
+    return pids
+
+
+def _tasklist_no_tasks_notice(stdout: str) -> bool:
+    """True when tasklist's localised "filter matched nothing" notice is all there is."""
+    first = next((line.strip() for line in stdout.splitlines() if line.strip()), "")
+    return first.casefold().startswith(_TASKLIST_NO_TASKS_PREFIXES)
 
 
 def _powerpoint_pids() -> list[int]:
@@ -1505,13 +1578,28 @@ def _powerpoint_pids() -> list[int]:
     PowerPoint is single-instance: asking COM for ``Presentations.Count`` would
     attach to a user's instance. The #41 boundary is that mid only ever drives
     an instance it created, so presence alone is the conservative busy signal.
+
+    Fails closed: a tasklist that cannot be run or parsed raises instead of
+    reporting "no PowerPoint", because the leftover assertions read an empty
+    list as "nothing survived" and would turn a blind spot into a false pass.
     """
-    result = subprocess.run(_TASKLIST_POWERPNT, capture_output=True, text=True, check=False, timeout=60)
-    pids = []
-    for row in csv.reader(result.stdout.splitlines()):
-        if len(row) >= 2 and row[0].upper() == "POWERPNT.EXE" and row[1].isdigit():
-            pids.append(int(row[1]))
-    return pids
+    try:
+        result = subprocess.run(_TASKLIST_POWERPNT, capture_output=True, text=True, check=False, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"tasklist could not be run ({exc}); cannot prove no POWERPNT.EXE is running") from exc
+    snippet = result.stdout.strip()[:200]
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"tasklist exited {result.returncode} (stdout={snippet!r}); cannot prove no POWERPNT.EXE is running"
+        )
+    pids = _parse_tasklist_pids(result.stdout)
+    if pids:
+        return pids
+    if _tasklist_no_tasks_notice(result.stdout):
+        return []
+    raise RuntimeError(
+        f"tasklist exited 0 with unparseable output (stdout={snippet!r}); cannot prove no POWERPNT.EXE is running"
+    )
 
 
 def _create_real_ppt(path: Path) -> None:
@@ -1538,6 +1626,101 @@ def _wait_for_no_powerpoint(timeout: float = 30.0) -> list[int]:
     return _powerpoint_pids()
 
 
+def _skip_after_fixture_failure(exc: Exception) -> None:
+    """Skip the real test only once no ``POWERPNT.EXE`` survives the failure.
+
+    A fixture child killed by the timeout cannot run its ``finally``, so the
+    server it started stays orphaned. Asserting the leftover first (naming the
+    pids) keeps that an honest failure instead of a silent skip.
+    """
+    leftover = _wait_for_no_powerpoint()
+    assert leftover == [], f"the .ppt fixture child failed ({exc}) and left POWERPNT.EXE behind (pid {leftover})"
+    pytest.skip(f"could not create a real .ppt on this runner: {exc}")
+
+
+_COUNT_UNREADABLE = object()
+
+
+class _FixturePresentations:
+    """Stand-in for ``app.Presentations`` whose ``Count`` may fail to read."""
+
+    def __init__(self, count, pres):
+        self._count = count
+        self.Add = MagicMock(name="Presentations.Add", return_value=pres)
+
+    @property
+    def Count(self):
+        if self._count is _COUNT_UNREADABLE:
+            raise RuntimeError("Call was rejected by callee. (0x80010108)")
+        return self._count
+
+
+class _FakeChildExit(Exception):
+    """Stands in for ``os._exit`` so an in-process child returns to the test."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"child exited {code}")
+        self.code = code
+
+
+def _run_create_ppt_child(
+    monkeypatch,
+    path: Path,
+    *,
+    count=_COUNT_UNREADABLE,
+    tasklist_stdout: str = "",
+    grace: str = "15.0",
+) -> SimpleNamespace:
+    """Run ``_CREATE_PPT_CHILD`` in-process against a fake COM server.
+
+    The real branches can only be reached with a live PowerPoint, so the
+    ownership guard and the post-``Quit`` poll are pinned here: the fake
+    ``DispatchEx`` hands back an instance whose ``Presentations.Count`` the test
+    controls, and records whether the child quitted what it was handed.
+    """
+    pres = MagicMock(name="Presentation")
+    pres.SaveAs.side_effect = lambda target, fmt: Path(target).write_bytes(b"ppt")
+    app = MagicMock(name="PowerPoint.Application")
+    app.Presentations = _FixturePresentations(count, pres)
+
+    fake_pythoncom = SimpleNamespace(CoInitialize=MagicMock(), CoUninitialize=MagicMock())
+    fake_client = SimpleNamespace(DispatchEx=MagicMock(name="DispatchEx", return_value=app))
+    fake_win32com = SimpleNamespace(client=fake_client)
+    monkeypatch.setitem(sys.modules, "pythoncom", fake_pythoncom)
+    monkeypatch.setitem(sys.modules, "win32com", fake_win32com)
+    monkeypatch.setitem(sys.modules, "win32com.client", fake_client)
+    monkeypatch.setattr(sys, "argv", ["-c", str(path), _PPT_TITLE, _PPT_BODY])
+    monkeypatch.setenv("MID_PPT_QUIT_GRACE", grace)
+
+    polls: list[list[str]] = []
+
+    def fake_tasklist(argv, **kwargs):
+        polls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, tasklist_stdout, "")
+
+    monkeypatch.setattr(subprocess, "run", fake_tasklist)
+
+    exits: list[int] = []
+
+    def fake_exit(code):
+        exits.append(code)
+        raise _FakeChildExit(code)
+
+    monkeypatch.setattr(os, "_exit", fake_exit)
+
+    error = None
+    started = time.monotonic()
+    try:
+        namespace: dict = {"__name__": "__ppt_fixture_child__"}
+        exec(compile(_CREATE_PPT_CHILD, "<ppt-fixture-child>", "exec"), namespace)
+    except _FakeChildExit:
+        pass
+    except BaseException as exc:  # the child re-raises whatever COM threw
+        error = exc
+    elapsed = time.monotonic() - started
+    return SimpleNamespace(app=app, pres=pres, polls=polls, exits=exits, error=error, elapsed=elapsed)
+
+
 def test_powerpoint_pid_guard_reads_tasklist():
     """The busy guard parses POWERPNT PIDs from tasklist, never via COM (#41)."""
     running = '"POWERPNT.EXE","4321","Console","1","12.345 K"\n"POWERPNT.EXE","8765","Console","1","9 K"\n'
@@ -1550,6 +1733,95 @@ def test_powerpoint_pid_guard_reads_tasklist():
     # Localized "no tasks match" text carries no PID -> nobody is running.
     with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "INFO: none\n", "")):
         assert _powerpoint_pids() == []
+    # Spanish Windows wraps the notice over two lines and mangles the accent
+    # through the console codepage (observed on this runner): still "nobody".
+    notice = "INFORMACI\xf3N: no hay tareas ejecut\xe1ndose que coincidan con los\ncriterios especificados.\n"
+    with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, notice, "")):
+        assert _powerpoint_pids() == []
+
+
+def test_powerpoint_pid_guard_fails_closed():
+    """An unreadable tasklist raises instead of reporting "no PowerPoint" (#41).
+
+    The leftover assertions read an empty list as "nothing survived", so a
+    failed or garbled read must fail the test rather than hide an orphan.
+    """
+    running = '"POWERPNT.EXE","4321","Console","1","12.345 K"\n'
+    failed = subprocess.CompletedProcess([], 1, running, "ERROR: invalid filter")
+    with patch.object(subprocess, "run", return_value=failed):
+        with pytest.raises(RuntimeError, match=r"tasklist exited 1"):
+            _powerpoint_pids()
+    for garbled in ("garbage\n", "", "Image Name,PID\n"):
+        with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, garbled, "")):
+            with pytest.raises(RuntimeError, match="unparseable"):
+                _powerpoint_pids()
+
+
+def test_real_ppt_fixture_failure_asserts_leftover_before_skipping(monkeypatch):
+    """A failed fixture child fails on an orphan instead of skipping (#41).
+
+    ``subprocess.run`` kills a timed-out child, so its ``finally`` never runs and
+    the POWERPNT.EXE it started cannot be cleaned up. That orphan must fail the
+    test with its pid, never disappear behind a silent skip.
+    """
+    exc = RuntimeError("PowerPoint fixture child exited -1: timed out")
+    with monkeypatch.context() as m:
+        m.setattr(sys.modules[__name__], "_wait_for_no_powerpoint", lambda *a, **k: [4321])
+        with pytest.raises(AssertionError, match="4321"):
+            _skip_after_fixture_failure(exc)
+    with monkeypatch.context() as m:
+        m.setattr(sys.modules[__name__], "_wait_for_no_powerpoint", lambda *a, **k: [])
+        with pytest.raises(pytest.skip.Exception, match="could not create a real .ppt"):
+            _skip_after_fixture_failure(exc)
+
+
+def test_real_ppt_fixture_child_never_quits_unproven_instance(monkeypatch, tmp_path, capsys):
+    """The fixture child quits only the instance it proved was its own (#41).
+
+    ``DispatchEx`` on single-instance PowerPoint can hand back a user's running
+    POWERPNT.EXE. Quitting after a failed ``Presentations.Count`` read could
+    close their unsaved work -- exactly what the production backend refuses.
+    """
+    unreadable = _run_create_ppt_child(monkeypatch, tmp_path / "a.ppt", count=_COUNT_UNREADABLE)
+    assert not unreadable.app.Quit.called, "never Quit an instance whose Count could not be read"
+    assert isinstance(unreadable.error, RuntimeError)
+    assert unreadable.exits == []
+    capsys.readouterr()
+
+    foreign = _run_create_ppt_child(monkeypatch, tmp_path / "b.ppt", count=2)
+    assert not foreign.app.Quit.called, "never Quit a foreign instance with open presentations"
+    assert foreign.exits == [3]
+    assert "open presentations is running" in capsys.readouterr().err
+
+    mine = _run_create_ppt_child(monkeypatch, tmp_path / "c.ppt", count=0)
+    assert mine.app.Quit.called, "an instance proven empty is the child's own to quit"
+    assert mine.pres.Close.called
+    assert mine.exits == [0]
+
+
+def test_real_ppt_fixture_child_polls_instead_of_fixed_sleep(monkeypatch, tmp_path, capsys):
+    """After Quit the child polls tasklist instead of sleeping a fixed 2s (#41).
+
+    The fixed sleep charged every run 2s even when the server was already gone;
+    the poll returns on the first clean read and, at its deadline, still exits
+    but names the pids that survived so the parent's assertion has evidence.
+    """
+    clean = _run_create_ppt_child(monkeypatch, tmp_path / "a.ppt", count=0)
+    assert clean.polls, "the child must read tasklist after Quit"
+    assert clean.polls[0] == _TASKLIST_POWERPNT
+    assert clean.elapsed < 1.0, "a clean poll must not pay the old fixed 2s grace"
+    assert "survived Quit" not in capsys.readouterr().err
+
+    survivor = _run_create_ppt_child(
+        monkeypatch,
+        tmp_path / "b.ppt",
+        count=0,
+        tasklist_stdout='"POWERPNT.EXE","4321","Console","1","12.345 K"\n',
+        grace="0.6",
+    )
+    err = capsys.readouterr().err
+    assert "survived Quit" in err and "4321" in err
+    assert survivor.exits == [0]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires Windows + installed PowerPoint")
@@ -1573,7 +1845,7 @@ def test_real_ppt_conversion_win32(tmp_path):
     try:
         _create_real_ppt(src)
     except Exception as exc:  # no PowerPoint COM / caption missing
-        pytest.skip(f"could not create a real .ppt on this runner: {exc}")
+        _skip_after_fixture_failure(exc)
     assert src.stat().st_size > 0
     leftover = _wait_for_no_powerpoint()
     assert leftover == [], f"the .ppt fixture child left POWERPNT.EXE behind (pid {leftover})"
