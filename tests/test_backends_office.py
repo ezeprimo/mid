@@ -10,10 +10,13 @@ taskkill /IM constrained to the allowlisted Office exes is fallback only.
 
 from __future__ import annotations
 
+import csv
 import os
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1437,69 +1440,157 @@ def test_real_doc_conversion_win32(tmp_path):
     assert result.content.strip()
 
 
-def _create_real_ppt(path: Path) -> None:
-    """Create a genuine legacy ``.ppt`` via PowerPoint COM (ppSaveAsPresentation = 1)."""
-    import gc
+# The real-PowerPoint test keeps every COM call in a child process. Finalizing a
+# PowerPoint proxy after its server exited reports RPC_E_DISCONNECTED
+# (0x80010108), which pytest's faulthandler prints as "Windows fatal exception"
+# from whichever process still holds the proxy. Children reap their own COM
+# state and then exit, so the dump never reaches the pytest process (#41).
+_PPT_TITLE = "Titulo de prueba 41"
+_PPT_BODY = "Cuerpo de la diapositiva"
 
-    import pythoncom
-    from win32com.client import DispatchEx
+_TASKLIST_POWERPNT = ["tasklist", "/FI", "IMAGENAME eq POWERPNT.EXE", "/FO", "CSV", "/NH"]
 
-    pythoncom.CoInitialize()
-    app = None
-    pres = None
-    slide = None
-    owns = False
-    try:
-        app = DispatchEx("PowerPoint.Application")
-        if int(app.Presentations.Count) > 0:
-            raise RuntimeError("a PowerPoint instance with open presentations is running")
-        owns = True
-        pres = app.Presentations.Add()
-        slide = pres.Slides.Add(1, 2)  # 2 = ppLayoutText (title + body)
-        slide.Shapes.Title.TextFrame.TextRange.Text = "Titulo de prueba 41"
-        slide.Shapes.Placeholders(2).TextFrame.TextRange.Text = "Cuerpo de la diapositiva"
-        pres.SaveAs(str(path), 1)  # 1 = ppSaveAsPresentation (.ppt)
-    finally:
-        # Release the presentation and its slide before Quit: wrappers released
-        # after PowerPoint exited report RPC_E_DISCONNECTED from the finalizer.
-        slide = None
-        if pres is not None:
-            try:
-                pres.Close()
-            except Exception:
-                pass
-        pres = None
-        if owns and app is not None:
-            try:
-                app.Quit()
-            except Exception:
-                pass
-        app = None
-        gc.collect()
+# Child-side fixture builder: creates a genuine legacy .ppt (ppSaveAsPresentation
+# = 1) and exits without running interpreter teardown. sys.argv = [-c, path,
+# title, body]. Exit 3 means a PowerPoint instance already held presentations.
+_CREATE_PPT_CHILD = r"""
+import os
+import sys
+import time
+
+import pythoncom
+from win32com.client import DispatchEx
+
+path, title, body = sys.argv[1], sys.argv[2], sys.argv[3]
+created = False
+pythoncom.CoInitialize()
+app = pres = None
+try:
+    app = DispatchEx("PowerPoint.Application")
+    if int(app.Presentations.Count) > 0:
+        # A foreign instance is never closed or quit (#41): leave before the
+        # cleanup below can reach it. Nothing of ours existed to clean up.
+        print("a PowerPoint instance with open presentations is running", file=sys.stderr)
+        sys.stderr.flush()
+        os._exit(3)
+    pres = app.Presentations.Add()
+    slide = pres.Slides.Add(1, 2)  # 2 = ppLayoutText (title + body)
+    slide.Shapes.Title.TextFrame.TextRange.Text = title
+    slide.Shapes.Placeholders(2).TextFrame.TextRange.Text = body
+    pres.SaveAs(path, 1)  # 1 = ppSaveAsPresentation (.ppt)
+    created = os.path.getsize(path) > 0
+finally:
+    for wrapper, call in ((pres, "Close"), (app, "Quit")):
         try:
-            pythoncom.CoUninitialize()
+            getattr(wrapper, call)()
         except Exception:
             pass
+    try:
+        pythoncom.CoUninitialize()
+    except Exception:
+        pass
+sys.stdout.flush()
+sys.stderr.flush()
+# Quit is asynchronous: exiting the instant it returns disconnects the automation
+# client mid-shutdown and can orphan a POWERPNT.EXE that then ignores every later
+# Quit. Give the server the grace to finish while this client is still alive.
+time.sleep(2.0)
+os._exit(0 if created else 1)
+"""
+
+
+def _powerpoint_pids() -> list[int]:
+    """Live ``POWERPNT.EXE`` PIDs, read from tasklist — never attached via COM.
+
+    PowerPoint is single-instance: asking COM for ``Presentations.Count`` would
+    attach to a user's instance. The #41 boundary is that mid only ever drives
+    an instance it created, so presence alone is the conservative busy signal.
+    """
+    result = subprocess.run(_TASKLIST_POWERPNT, capture_output=True, text=True, check=False, timeout=60)
+    pids = []
+    for row in csv.reader(result.stdout.splitlines()):
+        if len(row) >= 2 and row[0].upper() == "POWERPNT.EXE" and row[1].isdigit():
+            pids.append(int(row[1]))
+    return pids
+
+
+def _create_real_ppt(path: Path) -> None:
+    """Create a genuine legacy ``.ppt`` in a child process via PowerPoint COM."""
+    proc = subprocess.run(
+        [sys.executable, "-c", _CREATE_PPT_CHILD, str(path), _PPT_TITLE, _PPT_BODY],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"PowerPoint fixture child exited {proc.returncode}: {proc.stderr.strip()}")
+
+
+def _wait_for_no_powerpoint(timeout: float = 30.0) -> list[int]:
+    """Poll until no ``POWERPNT.EXE`` is left, or the timeout expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pids = _powerpoint_pids()
+        if not pids:
+            return []
+        time.sleep(0.25)
+    return _powerpoint_pids()
+
+
+def test_powerpoint_pid_guard_reads_tasklist():
+    """The busy guard parses POWERPNT PIDs from tasklist, never via COM (#41)."""
+    running = '"POWERPNT.EXE","4321","Console","1","12.345 K"\n"POWERPNT.EXE","8765","Console","1","9 K"\n'
+    with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, running, "")) as mock_run:
+        assert _powerpoint_pids() == [4321, 8765]
+    argv = mock_run.call_args[0][0]
+    assert isinstance(argv, list)
+    assert argv == _TASKLIST_POWERPNT
+    assert "shell" not in mock_run.call_args.kwargs
+    # Localized "no tasks match" text carries no PID -> nobody is running.
+    with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "INFO: none\n", "")):
+        assert _powerpoint_pids() == []
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires Windows + installed PowerPoint")
 def test_real_ppt_conversion_win32(tmp_path):
-    """Real .ppt -> md on a Windows host with PowerPoint (skipped elsewhere)."""
+    """Real .ppt -> md through the real CLI on a Windows host with PowerPoint.
+
+    The conversion runs as ``python -m mid convert ... --backend office`` in a
+    child process, so COM teardown leaves with the child (no 0x80010108 in the
+    pytest process) and the user-facing CLI contract is pinned end to end.
+    """
     from mid.backends.office import OfficeBackend
 
-    b = OfficeBackend()
-    avail = b.probe()
+    avail = OfficeBackend().probe()
     if not avail.available:
         pytest.skip(f"Office not detected on this runner: {avail.reason}")
+    busy = _powerpoint_pids()
+    if busy:
+        pytest.skip(f"PowerPoint already running (pid {busy}): never drive a foreign instance (#41)")
     src = tmp_path / "sample.ppt"
+    out = tmp_path / "sample.md"
     try:
         _create_real_ppt(src)
     except Exception as exc:  # no PowerPoint COM / caption missing
         pytest.skip(f"could not create a real .ppt on this runner: {exc}")
     assert src.stat().st_size > 0
-    result = b.convert(src)
-    if result.exit_code == 3:
-        pytest.skip(f"refused to touch a live PowerPoint instance: {result.error}")
-    assert result.success, result.error
-    assert result.content.strip()
-    assert "Titulo de prueba 41" in result.content
+    leftover = _wait_for_no_powerpoint()
+    assert leftover == [], f"the .ppt fixture child left POWERPNT.EXE behind (pid {leftover})"
+    proc = subprocess.run(
+        [sys.executable, "-m", "mid", "convert", str(src), "--backend", "office", "-o", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+    )
+    if proc.returncode == 3:
+        pytest.skip(f"refused to touch a live PowerPoint instance: {proc.stderr.strip()}")
+    assert proc.returncode == 0, proc.stderr
+    assert out.is_file(), proc.stderr
+    markdown = out.read_text(encoding="utf-8")
+    assert "<!-- Slide number:" in markdown
+    assert _PPT_TITLE in markdown
+    # The child quit the instance it created: no POWERPNT.EXE of ours survives.
+    leftover = _wait_for_no_powerpoint()
+    assert leftover == [], f"the conversion child left POWERPNT.EXE behind (pid {leftover})"
