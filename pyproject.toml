@@ -44,6 +44,7 @@ mid = "mid.cli:main"
 dev = [
     "build>=1.2.2",
     "ruff>=0.5.0",
+    "pytest-cov>=5.0.0",
 ]
 rich = [
     "rich>=13.0",
@@ -55,6 +56,19 @@ office-windows = [
 [tool.ruff]
 target-version = "py310"
 line-length = 127
+
+[tool.coverage.run]
+source = ["mid"]
+# Entry point only reachable via `python -m mid`; measured at 0% while the rest
+# of the package is covered.
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
