@@ -1310,6 +1310,10 @@ def test_cli_ppt_shared_instance_exits_3(tmp_path, capsys):
     assert "--backend libreoffice" in err
     assert app.quit_calls == 0
     assert app.Presentations.open_calls == []
+    # Issue #78: a refusal is not a failed conversion, and the prefix must not say it is.
+    first_line = err.strip().splitlines()[0]
+    assert first_line.startswith("error: ")
+    assert "conversion failed" not in first_line
 
 
 def test_cli_ordinary_conversion_failure_still_exits_1(tmp_path, capsys):

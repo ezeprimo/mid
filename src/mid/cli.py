@@ -335,7 +335,9 @@ def handler_convert(args: argparse.Namespace) -> None:
             # result that names a code gets it; every other failure stays exit 1.
             code = getattr(result, "exit_code", None)
             if code is not None:
-                print(f"error: conversion failed: {result.error or 'unknown error'}", file=sys.stderr)
+                # A refusal is not a failed conversion (#78): the backend declined
+                # before doing any work, and its own message already says why.
+                print(f"error: {result.error or 'unknown error'}", file=sys.stderr)
                 sys.exit(code)
             _exit_conv(result.error or "unknown error")
         ext = path.suffix.lower()
